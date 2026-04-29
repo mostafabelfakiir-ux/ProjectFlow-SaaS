@@ -120,7 +120,7 @@ const translations = {
   }
 };
 
-const opTypes = ["Change", "Duplicata", "Liquidation de crédit", "Mutation"];
+const opTypes = ["Échange", "Duplicata", "Liquidation de crédit", "Mutation"];
 
 function App() {
   const [lang, setLang] = useState('fr');
@@ -401,7 +401,7 @@ function ProjectDetails({ projects, t, onEdit }) {
   const [operations, setOperations] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [activeTab, setActiveTab] = useState('ops');
-  const [newOp, setNewOp] = useState({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGe', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
+  const [newOp, setNewOp] = useState({ date: format(new Date(), 'yyyy-MM-dd'), source: 'SGO', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [editingMissing, setEditingMissing] = useState(null);
 
@@ -436,7 +436,7 @@ function ProjectDetails({ projects, t, onEdit }) {
         ...newOp, project_id: id, date: Timestamp.fromDate(new Date(newOp.date)),
         amount_ht: Number(newOp.amount_ht), tva: Number(newOp.tva)
       });
-      setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGe', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
+      setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'SGO', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
     } catch (err) { console.error(err); }
   };
 
@@ -502,7 +502,7 @@ function ProjectDetails({ projects, t, onEdit }) {
                   ))}
                   <tr className="input-row">
                     <td><input type="date" className="input-sm" value={newOp.date} onChange={e => setNewOp({...newOp, date: e.target.value})} /></td>
-                    <td><select className="input-sm" value={newOp.source} onChange={e => setNewOp({...newOp, source: e.target.value})}><option>CGe</option><option>PCE</option></select></td>
+                    <td><select className="input-sm" value={newOp.source} onChange={e => setNewOp({...newOp, source: e.target.value})}><option>SGO</option><option>PCE</option></select></td>
                     <td><select className="input-sm" value={newOp.type} onChange={e => setNewOp({...newOp, type: e.target.value})}>{opTypes.map(o => <option key={o}>{o}</option>)}</select></td>
                     <td><input type="text" className="input-sm" value={newOp.matricule} onChange={e => setNewOp({...newOp, matricule: e.target.value})} placeholder={t.matricule} /></td>
                     <td className="td-center"><input type="checkbox" checked={newOp.client} onChange={e => setNewOp({...newOp, client: e.target.checked})} /></td>
