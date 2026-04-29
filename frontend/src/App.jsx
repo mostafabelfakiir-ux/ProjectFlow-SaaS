@@ -63,12 +63,13 @@ const translations = {
     operations: "Opérations",
     back: "Retour",
     date: "La date",
-    source: "SGE / ORPCC",
-    type: "Type Operation",
+    source: "Type Operation",
+    type: "Détail Operation",
+    matricule: "Matricule",
     client: "Client",
-    missing: "Dossiers Manquants",
-    ht: "Montant HT",
-    tva: "TVA",
+    missing: "Les pièces manquantes",
+    ht: "Paiement Net",
+    tva: "Frais Paiement",
     ttc: "Total TTC",
     duration: "Durée",
     priority: "Priorité",
@@ -119,7 +120,7 @@ const translations = {
   }
 };
 
-const opTypes = ["Liquidation de crédit", "Échange mutation", "Duplicata"];
+const opTypes = ["Change", "Duplicata", "Liquidation de crédit", "Mutation"];
 
 function App() {
   const [lang, setLang] = useState('fr');
@@ -400,7 +401,7 @@ function ProjectDetails({ projects, t, onEdit }) {
   const [operations, setOperations] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [activeTab, setActiveTab] = useState('ops');
-  const [newOp, setNewOp] = useState({ date: format(new Date(), 'yyyy-MM-dd'), source: 'SGE', type: opTypes[0], client: false, missing: '', amount_ht: '', tva: '' });
+  const [newOp, setNewOp] = useState({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGe', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [editingMissing, setEditingMissing] = useState(null);
 
@@ -435,7 +436,7 @@ function ProjectDetails({ projects, t, onEdit }) {
         ...newOp, project_id: id, date: Timestamp.fromDate(new Date(newOp.date)),
         amount_ht: Number(newOp.amount_ht), tva: Number(newOp.tva)
       });
-      setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'SGE', type: opTypes[0], client: false, missing: '', amount_ht: '', tva: '' });
+      setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGe', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
     } catch (err) { console.error(err); }
   };
 
@@ -470,6 +471,7 @@ function ProjectDetails({ projects, t, onEdit }) {
                     <th>{t.date}</th>
                     <th>{t.source}</th>
                     <th>{t.type}</th>
+                    <th>{t.matricule}</th>
                     <th>{t.client}</th>
                     <th>{t.missing}</th>
                     <th>{t.ht}</th>
@@ -484,6 +486,7 @@ function ProjectDetails({ projects, t, onEdit }) {
                       <td className="td-date">{op.date_str}</td>
                       <td className="td-source">{op.source}</td>
                       <td><span className="badge badge-low">{op.type}</span></td>
+                      <td className="td-center">{op.matricule || '--'}</td>
                       <td className="td-center">{op.client ? <Check size={16} color="#10b981" /> : <X size={16} color="#ef4444" />}</td>
                       <td className="td-missing">
                         <div className="missing-box">
@@ -499,8 +502,9 @@ function ProjectDetails({ projects, t, onEdit }) {
                   ))}
                   <tr className="input-row">
                     <td><input type="date" className="input-sm" value={newOp.date} onChange={e => setNewOp({...newOp, date: e.target.value})} /></td>
-                    <td><select className="input-sm" value={newOp.source} onChange={e => setNewOp({...newOp, source: e.target.value})}><option>SGE</option><option>PCE</option></select></td>
+                    <td><select className="input-sm" value={newOp.source} onChange={e => setNewOp({...newOp, source: e.target.value})}><option>CGe</option><option>PCE</option></select></td>
                     <td><select className="input-sm" value={newOp.type} onChange={e => setNewOp({...newOp, type: e.target.value})}>{opTypes.map(o => <option key={o}>{o}</option>)}</select></td>
+                    <td><input type="text" className="input-sm" value={newOp.matricule} onChange={e => setNewOp({...newOp, matricule: e.target.value})} placeholder={t.matricule} /></td>
                     <td className="td-center"><input type="checkbox" checked={newOp.client} onChange={e => setNewOp({...newOp, client: e.target.checked})} /></td>
                     <td><input className="input-sm" value={newOp.missing} onChange={e => setNewOp({...newOp, missing: e.target.value})} placeholder={t.missing} /></td>
                     <td><input type="number" className="input-sm" value={newOp.amount_ht} onChange={e => setNewOp({...newOp, amount_ht: e.target.value})} /></td>
