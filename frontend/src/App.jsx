@@ -30,6 +30,7 @@ import {
 } from 'lucide-react';
 import { format, startOfMonth, endOfMonth, addMonths } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
+import Dashboard from './Dashboard';
 import { db } from './firebase';
 import { 
   collection, 
@@ -558,84 +559,6 @@ function ProjectDetails({ projects, t, onEdit }) {
   );
 }
 
-function Dashboard({ projects, t }) {
-  const [data, setData] = useState({ total_ht: 0, total_tva: 0, wallet: {} });
-  
-  useEffect(() => {
-    // Only count operations belonging to projects that currently exist
-    const projectIds = projects.map(p => p.id);
-    
-    const unsubscribe = onSnapshot(collection(db, "operations"), (snapshot) => {
-      let ht = 0; let tva_val = 0; let wallet = {};
-      
-      snapshot.docs.forEach(doc => {
-        const d = doc.data();
-        
-        // Safety check: Only count if project exists
-        if (!projectIds.includes(d.project_id)) return;
 
-        const opDate = d.date?.toDate() || new Date();
-        const monthYear = format(opDate, 'MMMM yyyy');
-        
-        const val_ht = Number(d.amount_ht) || 0;
-        const val_tva = Number(d.tva) || 0;
-        
-        ht += val_ht;
-        tva_val += val_tva;
-        
-        if (!wallet[monthYear]) {
-          wallet[monthYear] = { ht: 0, tva: 0, ttc: 0 };
-        }
-        wallet[monthYear].ht += val_ht;
-        wallet[monthYear].tva += val_tva;
-        wallet[monthYear].ttc += (val_ht + val_tva);
-      });
-      
-      setData({ total_ht: ht, total_tva: tva_val, wallet });
-    });
-    
-    return () => unsubscribe();
-  }, [projects]);
-
-  return (
-    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
-      <h2 className="page-title" style={{ marginBottom: '32px' }}>{t.dashboard}</h2>
-      <div className="stats-grid">
-        <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
-          <div className="stat-label">{t.totalCa}</div>
-          <div className="stat-value">{data.total_ht.toLocaleString()} <span className="currency">DH</span></div>
-        </div>
-        <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
-          <div className="stat-label">{t.totalTva}</div>
-          <div className="stat-value">{data.total_tva.toLocaleString()} <span className="currency">DH</span></div>
-        </div>
-        <div className="card stat-card" style={{ borderLeft: '4px solid #f59e0b' }}>
-          <div className="stat-label">Total {t.ttc}</div>
-          <div className="stat-value">{(data.total_ht + data.total_tva).toLocaleString()} <span className="currency">DH</span></div>
-        </div>
-      </div>
-      <div className="card" style={{ overflow: 'hidden' }}>
-        <h3 style={{ fontSize: '18px', fontWeight: '700', marginBottom: '20px' }}>{t.monthlyWallet}</h3>
-        <div className="table-container scrollable">
-          <table>
-            <thead>
-              <tr><th>{t.month}</th><th>{t.ht}</th><th>{t.tva}</th><th>{t.ttc}</th></tr>
-            </thead>
-            <tbody>
-              {Object.entries(data.wallet).sort((a,b) => new Date(b[0]) - new Date(a[0])).map(([month, totals]) => (
-                <tr key={month}>
-                  <td style={{ fontWeight: '700' }}>{month}</td>
-                  <td className="td-amount">{totals.ht.toLocaleString()} DH</td>
-                  <td className="td-amount">{totals.tva.toLocaleString()} DH</td>
-                  <td style={{ fontWeight: '800', color: 'var(--accent-color)' }} className="td-amount">{totals.ttc.toLocaleString()} DH</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </motion.div>
-  );
-}
 
 export default App;
