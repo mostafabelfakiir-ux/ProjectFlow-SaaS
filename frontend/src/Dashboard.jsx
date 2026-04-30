@@ -2,22 +2,22 @@ import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { db } from './firebase';
 import { collection, onSnapshot, doc, updateDoc, setDoc, addDoc, deleteDoc, query, orderBy, serverTimestamp } from 'firebase/firestore';
+// financialData (servicesTotal, monthlyTotal, fraisByDate) comes from App-level listener via props
 import { format } from 'date-fns';
 import { Check, Trash2, Plus, X, Settings, Target, CheckCircle2, TrendingUp } from 'lucide-react';
 
-export default function Dashboard({ t, setPassModal }) {
+export default function Dashboard({ t, setPassModal, currentUser, financialData = {} }) {
   const [tasks, setTasks] = useState([]);
   const [showTasksModal, setShowTasksModal] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
-  
+
   const [settings, setSettings] = useState({ monthly_target: 10000, daily_target: 500, app_password: '1234' });
   const [showSettings, setShowSettings] = useState(false);
-  
+
   const [dailyEntries, setDailyEntries] = useState([]);
   const [newEntry, setNewEntry] = useState({ date: format(new Date(), 'yyyy-MM-dd'), edp: 0, narsa: 0, radiif: 0, p2: 0, pm: 0, em: 0, wu: 0, ria: 0, mg: 0, revenue: 0 });
-  
-  const [monthlyTotal, setMonthlyTotal] = useState(0);
-  const [servicesTotal, setServicesTotal] = useState(0);
+
+  const { servicesTotal = 0, monthlyTotal = 0, fraisByDate = {} } = financialData;
 
   useEffect(() => {
     // Global Tasks
@@ -34,22 +34,9 @@ export default function Dashboard({ t, setPassModal }) {
       }
     });
 
-    // Daily Entries
+    // Daily Entries - pour afficher le tableau Smart Goals uniquement
     const unsubDaily = onSnapshot(query(collection(db, "daily_goals"), orderBy("date", "desc")), snap => {
-      const entries = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      setDailyEntries(entries);
-      
-      const serviceKeys = ['edp', 'narsa', 'radiif', 'p2', 'pm', 'em', 'wu', 'ria', 'mg'];
-      const todayStr = format(new Date(), 'yyyy-MM-dd');
-      const todayEntry = entries.find(e => e.date === todayStr);
-      const todayServicesSum = todayEntry
-        ? serviceKeys.reduce((sum, k) => sum + Number(todayEntry[k] || 0), 0)
-        : 0;
-      setServicesTotal(todayServicesSum);
-      
-      const currentMonth = format(new Date(), 'yyyy-MM');
-      const mTotal = entries.filter(e => e.date.startsWith(currentMonth)).reduce((acc, curr) => acc + Number(curr.revenue), 0);
-      setMonthlyTotal(mTotal);
+      setDailyEntries(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
 
     return () => { unsubTasks(); unsubSettings(); unsubDaily(); };
@@ -116,31 +103,35 @@ export default function Dashboard({ t, setPassModal }) {
           </div>
         </div>
 
-        {/* Card 2: Objectif Journalier */}
-        <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
-          <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Objectif Journalier</span>
-            <TrendingUp size={16} color="#10b981" />
-          </div>
-          <div className="stat-value">{servicesTotal.toLocaleString()} <span className="currency">DH</span></div>
-          <div className="progress-bg" style={{ marginTop: '10px' }}>
-            <div className="progress-fill" style={{ width: `${progressDaily}%`, background: '#10b981' }}></div>
-          </div>
-          <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressDaily}% de {settings.daily_target} DH</div>
-        </div>
+        {currentUser?.role === 'admin' && (
+          <>
+            {/* Card 2: Objectif Journalier */}
+            <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
+              <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Objectif Journalier</span>
+                <TrendingUp size={16} color="#10b981" />
+              </div>
+              <div className="stat-value">{servicesTotal.toLocaleString()} <span className="currency">DH</span></div>
+              <div className="progress-bg" style={{ marginTop: '10px' }}>
+                <div className="progress-fill" style={{ width: `${progressDaily}%`, background: '#10b981' }}></div>
+              </div>
+              <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressDaily}% de {settings.daily_target} DH</div>
+            </div>
 
-        {/* Card 3: Objectifs du Mois */}
-        <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
-          <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Objectifs Mensuels</span>
-            <Target size={16} color="var(--accent-color)" />
-          </div>
-          <div className="stat-value">{monthlyTotal.toLocaleString()} <span className="currency">DH</span></div>
-          <div className="progress-bg" style={{ marginTop: '10px' }}>
-            <div className="progress-fill" style={{ width: `${progressMonthly}%`, background: 'var(--accent-color)' }}></div>
-          </div>
-          <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressMonthly}% de {settings.monthly_target} DH</div>
-        </div>
+            {/* Card 3: Objectifs du Mois */}
+            <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
+              <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Objectifs du Mois</span>
+                <Target size={16} color="var(--accent-color)" />
+              </div>
+              <div className="stat-value">{monthlyTotal.toLocaleString()} <span className="currency">DH</span></div>
+              <div className="progress-bg" style={{ marginTop: '10px' }}>
+                <div className="progress-fill" style={{ width: `${progressMonthly}%`, background: 'var(--accent-color)' }}></div>
+              </div>
+              <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressMonthly}% de {settings.monthly_target} DH</div>
+            </div>
+          </>
+        )}
       </div>
 
       {/* Smart Goals System - Daily Input */}
@@ -183,8 +174,8 @@ export default function Dashboard({ t, setPassModal }) {
                       />
                     </td>
                   ))}
-                  <td className="td-ttc" style={{fontWeight:'bold'}}>
-                    {(['edp','narsa','radiif','p2','pm','em','wu','ria','mg'].reduce((sum, f) => sum + Number(newEntry[f] || 0), 0)).toLocaleString()} DH
+                  <td className="td-ttc" style={{fontWeight:'bold', color:'var(--accent)'}}>
+                    {(fraisByDate[newEntry.date] || 0).toLocaleString()} DH
                   </td>
                   <td><button className="btn btn-primary btn-sm" onClick={handleAddEntry}><Plus size={16} /></button></td>
                 </tr>
@@ -200,7 +191,7 @@ export default function Dashboard({ t, setPassModal }) {
                     <td className="td-center">{entry.wu}</td>
                     <td className="td-center">{entry.ria}</td>
                     <td className="td-center">{entry.mg}</td>
-                    <td className="td-amount td-ttc">{entry.revenue?.toLocaleString()} DH</td>
+                    <td className="td-amount td-ttc" style={{fontWeight:'700', color:'var(--accent)'}}>{(fraisByDate[entry.date] || 0).toLocaleString()} DH</td>
                     <td><button className="btn-icon-danger" onClick={() => {
                       setPassModal({
                         show: true,

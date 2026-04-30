@@ -2,7 +2,7 @@ import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
-const firebaseConfig = {
+export const firebaseConfig = {
   projectId: "project-management-98bdc",
   appId: "1:109160710729:web:f514c4ca1edf3f8537f598",
   storageBucket: "project-management-98bdc.firebasestorage.app",

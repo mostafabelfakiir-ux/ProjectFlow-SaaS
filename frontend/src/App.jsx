@@ -8,13 +8,13 @@ import {
   useNavigate,
   useLocation
 } from 'react-router-dom';
-import { 
-  Plus, 
-  Calendar, 
-  BarChart3, 
-  CheckCircle2, 
-  Clock, 
-  AlertCircle, 
+import {
+  Plus,
+  Calendar,
+  BarChart3,
+  CheckCircle2,
+  Clock,
+  AlertCircle,
   ArrowLeft,
   FileText,
   Check,
@@ -30,26 +30,42 @@ import {
   Sun,
   Moon,
   TrendingUp,
-  Target
+  Target,
+  LogOut,
+  UserCog
 } from 'lucide-react';
+import LoginPage from './LoginPage';
 import { format, startOfMonth, endOfMonth, addMonths } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import Dashboard from './Dashboard';
-import { db } from './firebase';
-import { 
-  collection, 
-  addDoc, 
-  onSnapshot, 
-  query, 
-  doc, 
+import { db, auth, firebaseConfig } from './firebase';
+import {
+  collection,
+  addDoc,
+  onSnapshot,
+  query,
+  doc,
   updateDoc,
   deleteDoc,
   Timestamp,
   serverTimestamp,
   where,
   getDocs,
+  getDoc,
+  setDoc,
   writeBatch
 } from 'firebase/firestore';
+import {
+  onAuthStateChanged,
+  signOut,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword as fbSignIn,
+  updatePassword,
+  deleteUser as fbDeleteUser
+} from 'firebase/auth';
+import { initializeApp, deleteApp } from 'firebase/app';
+import { getAuth } from 'firebase/auth';
+import { nameToEmail, toFirebaseEmail } from './LoginPage';
 
 const translations = {
   fr: {
@@ -144,6 +160,9 @@ function Toast({ message, type = 'success', onClose }) {
 }
 
 function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [lang, setLang] = useState('fr');
   const [projects, setProjects] = useState([]);
   const [toast, setToast] = useState(null);
@@ -155,6 +174,34 @@ function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [passModal, setPassModal] = useState({ show: false, onConfirm: null });
   const [appPassword, setAppPassword] = useState('1234');
+  const [financialData, setFinancialData] = useState({ servicesTotal: 0, monthlyTotal: 0, fraisByDate: {} });
+
+  // Auth — with 4s fallback timeout for slow mobile connections
+  useEffect(() => {
+    const fallback = setTimeout(() => setAuthChecked(true), 4000);
+    const unsub = onAuthStateChanged(auth, async (fbUser) => {
+      clearTimeout(fallback);
+      if (fbUser) {
+        try {
+          const snap = await getDoc(doc(db, 'users', fbUser.uid));
+          if (snap.exists()) {
+            setCurrentUser({ uid: fbUser.uid, ...snap.data() });
+          } else {
+            await signOut(auth);
+            setCurrentUser(null);
+          }
+        } catch {
+          setCurrentUser(null);
+        }
+      } else {
+        setCurrentUser(null);
+      }
+      setAuthChecked(true);
+    });
+    return () => { unsub(); clearTimeout(fallback); };
+  }, []);
+
+  const handleLogout = () => signOut(auth);
 
   const t = translations[lang];
 
@@ -163,6 +210,7 @@ function App() {
     localStorage.setItem('theme', theme);
   }, [theme]);
 
+  // Settings listener
   useEffect(() => {
     const unsub = onSnapshot(doc(db, "settings", "global"), (snap) => {
       if (snap.exists() && snap.data().app_password) setAppPassword(snap.data().app_password);
@@ -170,51 +218,79 @@ function App() {
     return () => unsub();
   }, []);
 
+  // Projects listener — 3s timeout
   useEffect(() => {
-    const q = collection(db, "projects");
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const projectsList = snapshot.docs.map(doc => {
-        const data = doc.data();
+    const timeout = setTimeout(() => setLoading(false), 3000);
+    const unsub = onSnapshot(collection(db, "projects"), (snapshot) => {
+      clearTimeout(timeout);
+      const list = snapshot.docs.map(d => {
+        const data = d.data();
         return {
-          id: doc.id,
-          ...data,
-          start_date: data.start_date && typeof data.start_date.toDate === 'function' ? data.start_date.toDate().toISOString().split('T')[0] : data.start_date,
-          end_date: data.end_date && typeof data.end_date.toDate === 'function' ? data.end_date.toDate().toISOString().split('T')[0] : data.end_date,
+          id: d.id, ...data,
+          start_date: data.start_date?.toDate ? data.start_date.toDate().toISOString().split('T')[0] : data.start_date,
+          end_date: data.end_date?.toDate ? data.end_date.toDate().toISOString().split('T')[0] : data.end_date,
           createdAt: data.createdAt?.toDate() || new Date()
         };
       }).sort((a, b) => b.createdAt - a.createdAt);
-      setProjects(projectsList);
+      setProjects(list);
       setLoading(false);
+    }, () => { clearTimeout(timeout); setLoading(false); });
+    return () => { unsub(); clearTimeout(timeout); };
+  }, []);
+
+  // Single operations listener — shared across Sidebar, ProjectsView, Dashboard
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "operations"), snap => {
+      const map = {};
+      snap.docs.forEach(d => {
+        const data = d.data();
+        const dateStr = data.date?.toDate ? data.date.toDate().toISOString().split('T')[0] : null;
+        if (dateStr) map[dateStr] = (map[dateStr] || 0) + Number(data.tva || 0);
+      });
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      const currentMonth = format(new Date(), 'yyyy-MM');
+      setFinancialData({
+        servicesTotal: map[todayStr] || 0,
+        monthlyTotal: Object.entries(map).filter(([d]) => d.startsWith(currentMonth)).reduce((acc, [, v]) => acc + v, 0),
+        fraisByDate: map
+      });
     });
-    return () => unsubscribe();
+    return () => unsub();
   }, []);
 
   const showToast = (message, type = 'success') => setToast({ message, type });
 
   const handleSaveProject = async (projectData) => {
-    if (!projectData.name?.trim()) { showToast(lang === 'fr' ? 'Le nom du projet est requis' : 'Project name is required', 'error'); return; }
+    if (!projectData.name?.trim()) { showToast('Le nom du projet est requis', 'error'); return; }
+    if (!projectData.start_date || !projectData.end_date) { showToast('Les dates sont requises', 'error'); return; }
+    const startD = new Date(projectData.start_date);
+    const endD = new Date(projectData.end_date);
+    if (isNaN(startD.getTime()) || isNaN(endD.getTime())) { showToast('Dates invalides', 'error'); return; }
     try {
       const payload = {
-        ...projectData,
         name: projectData.name.trim(),
-        start_date: Timestamp.fromDate(new Date(projectData.start_date)),
-        end_date: Timestamp.fromDate(new Date(projectData.end_date))
+        start_date: Timestamp.fromDate(startD),
+        end_date: Timestamp.fromDate(endD),
+        priority: projectData.priority || 'Medium',
+        status: projectData.status || 'Not started'
       };
       if (editingProject) {
         await updateDoc(doc(db, "projects", editingProject.id), payload);
-        showToast(lang === 'fr' ? 'Projet modifié ✓' : 'Project updated ✓');
+        showToast('Projet modifié ✓');
       } else {
-        await addDoc(collection(db, "projects"), { 
-          ...payload,
-          progress: 0,
-          createdAt: serverTimestamp()
-        });
-        showToast(lang === 'fr' ? 'Projet créé ✓' : 'Project created ✓');
+        await addDoc(collection(db, "projects"), { ...payload, progress: 0, createdAt: serverTimestamp() });
+        showToast('Projet créé ✓');
       }
       setModalOpen(false);
       setEditingProject(null);
-    } catch (err) { console.error(err); showToast(lang === 'fr' ? 'Erreur!' : 'Error!', 'error'); }
+    } catch (err) { console.error(err); showToast('Erreur: ' + err.message, 'error'); }
   };
+
+  if (!authChecked) return <div className="loading-screen">
+    <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }}><Settings size={40} color="var(--accent-color)" /></motion.div>
+  </div>;
+
+  if (!currentUser) return <LoginPage />;
 
   if (loading) return <div className="loading-screen">
     <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 1 }}><Settings size={40} color="var(--accent-color)" /></motion.div>
@@ -223,7 +299,7 @@ function App() {
   return (
     <Router>
       <div className={`app-container ${isCollapsed ? 'sidebar-collapsed' : ''}`}>
-        <Sidebar isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} t={t} />
+        <Sidebar isSidebarOpen={isSidebarOpen} setIsSidebarOpen={setIsSidebarOpen} isCollapsed={isCollapsed} setIsCollapsed={setIsCollapsed} t={t} currentUser={currentUser} financialData={financialData} />
         
         <div className="content-wrapper">
           <header className="main-header">
@@ -232,8 +308,18 @@ function App() {
               <h1 className="header-title">ProjectFlow</h1>
             </div>
             <div className="header-right">
+              <span className="user-name-badge">{currentUser.name}</span>
+              {currentUser.role === 'admin' && (
+                <button className="btn btn-secondary btn-sm" onClick={() => setShowAdminPanel(true)} title="Gestion Utilisateurs">
+                  <UserCog size={15} />
+                </button>
+              )}
+              <button className="btn btn-secondary btn-sm" onClick={handleLogout} title="Se déconnecter">
+                <LogOut size={15} />
+              </button>
+              <div className="header-divider" />
               <button className="theme-toggle" onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')} title="Toggle Theme">
-                {theme === 'light' ? <Moon size={18} /> : <Sun size={18} />}
+                {theme === 'light' ? <Moon size={17} /> : <Sun size={17} />}
               </button>
               <LangToggle lang={lang} setLang={setLang} />
             </div>
@@ -241,9 +327,9 @@ function App() {
 
           <main className="main-content">
             <Routes>
-              <Route path="/" element={<ProjectsView projects={projects} t={t} setPassModal={setPassModal} onAdd={() => { setEditingProject(null); setModalOpen(true); }} onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} />} />
+              <Route path="/" element={<ProjectsView projects={projects} t={t} setPassModal={setPassModal} currentUser={currentUser} financialData={financialData} onAdd={() => { setEditingProject(null); setModalOpen(true); }} onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} />} />
               <Route path="/project/:id" element={<ProjectDetails projects={projects} t={t} setPassModal={setPassModal} onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} />} />
-              <Route path="/dashboard" element={<Dashboard projects={projects} t={t} setPassModal={setPassModal} />} />
+              <Route path="/dashboard" element={<Dashboard t={t} setPassModal={setPassModal} currentUser={currentUser} financialData={financialData} />} />
             </Routes>
           </main>
         </div>
@@ -252,17 +338,18 @@ function App() {
           {toast && <Toast message={toast.message} type={toast.type} onClose={() => setToast(null)} />}
           {modalOpen && <ProjectModal t={t} project={editingProject} onSave={handleSaveProject} onClose={() => setModalOpen(false)} />}
           {passModal.show && (
-            <PasswordModal 
+            <PasswordModal
               t={t}
               appPassword={appPassword}
-              onClose={() => setPassModal({ show: false, onConfirm: null })} 
+              onClose={() => setPassModal({ show: false, onConfirm: null })}
               onSuccess={() => {
                 if (passModal.onConfirm) passModal.onConfirm();
                 setPassModal({ show: false, onConfirm: null });
                 showToast(lang === 'fr' ? 'Supprimé ✓' : 'Deleted ✓');
-              }} 
+              }}
             />
           )}
+          {showAdminPanel && <AdminPanel onClose={() => setShowAdminPanel(false)} />}
         </AnimatePresence>
       </div>
     </Router>
@@ -365,9 +452,11 @@ const LangToggle = ({ lang, setLang }) => (
   </div>
 );
 
-const Sidebar = ({ isSidebarOpen, setIsSidebarOpen, isCollapsed, setIsCollapsed, t }) => {
+const Sidebar = ({ isSidebarOpen, setIsSidebarOpen, isCollapsed, setIsCollapsed, t, currentUser, financialData = {} }) => {
   const location = useLocation();
   const nav = useNavigate();
+  const { servicesTotal: dailyTotal = 0, monthlyTotal = 0 } = financialData;
+
   const menuItems = [
     { path: '/', icon: Layout, label: t.projects },
     { path: '/dashboard', icon: BarChart3, label: t.dashboard }
@@ -386,44 +475,46 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen, isCollapsed, setIsCollapsed,
         </div>
         <nav className="sidebar-nav">
           {menuItems.map(item => (
-            <button key={item.path} className={`sidebar-btn ${location.pathname === item.path ? 'active' : ''}`} 
+            <button key={item.path} className={`sidebar-btn ${location.pathname === item.path ? 'active' : ''}`}
               onClick={() => { nav(item.path); setIsSidebarOpen(false); }} title={isCollapsed ? item.label : ''}>
-              <item.icon size={18} /> 
+              <item.icon size={18} />
               {!isCollapsed && <span>{item.label}</span>}
             </button>
           ))}
         </nav>
+        {!isCollapsed && currentUser?.role === 'admin' && (
+          <div className="sidebar-finance">
+            <div className="sidebar-finance-title">Résumé Financier</div>
+            <div className="sidebar-finance-row">
+              <span className="sf-label">↑ Entrées (Jour)</span>
+              <span className="sf-value in">{dailyTotal.toLocaleString()} DH</span>
+            </div>
+            <div className="sidebar-finance-row">
+              <span className="sf-label">↑ Entrées (Mois)</span>
+              <span className="sf-value month">{monthlyTotal.toLocaleString()} DH</span>
+            </div>
+          </div>
+        )}
       </aside>
     </>
   );
 };
 
-function ProjectsView({ projects, t, onAdd, onEdit, setPassModal }) {
+function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, financialData = {} }) {
   const [tasks, setTasks] = useState([]);
   const [showTasksModal, setShowTasksModal] = useState(false);
-  const [monthlyTotal, setMonthlyTotal] = useState(0);
-  const [servicesTotal, setServicesTotal] = useState(0);
   const [settings, setSettings] = useState({ monthly_target: 10000, daily_target: 500 });
+
+  const { servicesTotal = 0, monthlyTotal = 0 } = financialData;
 
   useEffect(() => {
     const unsubTasks = onSnapshot(collection(db, "global_tasks"), snap => {
       setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
-    const serviceKeys = ['edp', 'narsa', 'radiif', 'p2', 'pm', 'em', 'wu', 'ria', 'mg'];
-    const unsubDaily = onSnapshot(collection(db, "daily_goals"), snap => {
-      const entries = snap.docs.map(d => d.data());
-      const todayStr = format(new Date(), 'yyyy-MM-dd');
-      const todayEntry = entries.find(e => e.date === todayStr);
-      setServicesTotal(todayEntry ? serviceKeys.reduce((sum, k) => sum + Number(todayEntry[k] || 0), 0) : 0);
-      const currentMonth = format(new Date(), 'yyyy-MM');
-      const mTotal = entries.filter(e => e.date?.startsWith(currentMonth))
-        .reduce((acc, e) => acc + serviceKeys.reduce((s, k) => s + Number(e[k] || 0), 0), 0);
-      setMonthlyTotal(mTotal);
-    });
     const unsubSettings = onSnapshot(doc(db, "settings", "global"), docSnap => {
       if(docSnap.exists()) setSettings(docSnap.data());
     });
-    return () => { unsubTasks(); unsubDaily(); unsubSettings(); };
+    return () => { unsubTasks(); unsubSettings(); };
   }, []);
 
   const pendingTasks = tasks.filter(t => !t.completed).length;
@@ -452,31 +543,35 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal }) {
           </div>
         </div>
 
-        {/* Card 2 — Objectif Journalier */}
-        <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
-          <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Objectif Journalier</span>
-            <TrendingUp size={16} color="#10b981" />
-          </div>
-          <div className="stat-value">{servicesTotal.toLocaleString()} <span className="currency">DH</span></div>
-          <div className="progress-bg" style={{ marginTop: '10px' }}>
-            <div className="progress-fill" style={{ width: `${progressDaily}%`, background: '#10b981' }}></div>
-          </div>
-          <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressDaily}% de {settings.daily_target} DH</div>
-        </div>
+        {currentUser?.role === 'admin' && (
+          <>
+            {/* Card 2 — Objectif Journalier */}
+            <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
+              <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Objectif Journalier</span>
+                <TrendingUp size={16} color="#10b981" />
+              </div>
+              <div className="stat-value">{servicesTotal.toLocaleString()} <span className="currency">DH</span></div>
+              <div className="progress-bg" style={{ marginTop: '10px' }}>
+                <div className="progress-fill" style={{ width: `${progressDaily}%`, background: '#10b981' }}></div>
+              </div>
+              <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressDaily}% de {settings.daily_target} DH</div>
+            </div>
 
-        {/* Card 3 — Objectifs Mensuels */}
-        <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
-          <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Objectifs Mensuels</span>
-            <Target size={16} color="var(--accent-color)" />
-          </div>
-          <div className="stat-value">{monthlyTotal.toLocaleString()} <span className="currency">DH</span></div>
-          <div className="progress-bg" style={{ marginTop: '10px' }}>
-            <div className="progress-fill" style={{ width: `${progressMonthly}%`, background: 'var(--accent-color)' }}></div>
-          </div>
-          <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressMonthly}% de {settings.monthly_target} DH</div>
-        </div>
+            {/* Card 3 — Objectifs du Mois */}
+            <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
+              <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span>Objectifs du Mois</span>
+                <Target size={16} color="var(--accent-color)" />
+              </div>
+              <div className="stat-value">{monthlyTotal.toLocaleString()} <span className="currency">DH</span></div>
+              <div className="progress-bg" style={{ marginTop: '10px' }}>
+                <div className="progress-fill" style={{ width: `${progressMonthly}%`, background: 'var(--accent-color)' }}></div>
+              </div>
+              <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressMonthly}% de {settings.monthly_target} DH</div>
+            </div>
+          </>
+        )}
       </div>
 
       <div className="project-grid">
@@ -664,14 +759,18 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
   if (!project) return <div className="loading-screen">{t.loading}</div>;
 
   const handleAddOp = async () => {
-    if (!newOp.amount_ht) return;
+    const ht = Number(newOp.amount_ht);
+    if (!newOp.amount_ht || isNaN(ht) || ht <= 0) {
+      alert('Entrez le Paiement Net (> 0)');
+      return;
+    }
     try {
-      await addDoc(collection(db, "operations"), { 
+      await addDoc(collection(db, "operations"), {
         ...newOp, project_id: id, date: Timestamp.fromDate(new Date(newOp.date)),
-        amount_ht: Number(newOp.amount_ht), tva: Number(newOp.tva)
+        amount_ht: ht, tva: Number(newOp.tva) || 0
       });
       setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'SGO', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert('Erreur: ' + err.message); }
   };
 
   const handleUpdateMissing = async () => {
@@ -733,16 +832,13 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
                   <label className="label">{t.missing}</label>
                   <input className="input-field" value={newOp.missing} onChange={e => setNewOp({...newOp, missing: e.target.value})} placeholder={t.missing} />
                 </div>
-                <div className="form-group-sm">
-                  <span className="label">&nbsp;</span>
-                  <div className="op-ttc-btn">
+                <div className="op-ttc-btn">
                     <label className="client-check-label">
                       <input type="checkbox" checked={newOp.client} onChange={e => setNewOp({...newOp, client: e.target.checked})} />
                       {t.client}
                     </label>
                     <span className="ttc-preview">{(Number(newOp.amount_ht || 0) + Number(newOp.tva || 0)).toLocaleString()} DH</span>
                     <button className="btn btn-primary op-add-btn" onClick={handleAddOp}><Plus size={16} /> Ajouter</button>
-                  </div>
                 </div>
               </div>
             </div>
@@ -842,6 +938,134 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
   );
 }
 
+function AdminPanel({ onClose }) {
+  const [users, setUsers] = useState([]);
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'employee' });
+  const [editPass, setEditPass] = useState(null);
+  const [busy, setBusy] = useState(false);
 
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'users'), snap => {
+      setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return () => unsub();
+  }, []);
+
+  const withSecondaryApp = async (fn) => {
+    const key = 'sec_' + Date.now();
+    const secApp = initializeApp(firebaseConfig, key);
+    const secAuth = getAuth(secApp);
+    try { return await fn(secAuth); }
+    finally { try { await signOut(secAuth); } catch {} await deleteApp(secApp); }
+  };
+
+  const handleAdd = async () => {
+    if (!newUser.name.trim() || !newUser.password.trim()) return;
+    if (newUser.password.length < 6) { alert('Mot de passe minimum 6 caractères'); return; }
+    setBusy(true);
+    try {
+      const email = newUser.email.trim() ? newUser.email.trim().toLowerCase() : nameToEmail(newUser.name);
+      await withSecondaryApp(async (secAuth) => {
+        const cred = await createUserWithEmailAndPassword(secAuth, email, newUser.password);
+        await setDoc(doc(db, 'users', cred.user.uid), {
+          name: newUser.name.trim(), email, role: newUser.role,
+          password: newUser.password, createdAt: serverTimestamp()
+        });
+      });
+      setNewUser({ name: '', email: '', password: '', role: 'employee' });
+    } catch (err) { alert('Erreur: ' + err.message); }
+    finally { setBusy(false); }
+  };
+
+  const handleDelete = async (user) => {
+    setBusy(true);
+    try {
+      await withSecondaryApp(async (secAuth) => {
+        const cred = await fbSignIn(secAuth, user.email, user.password);
+        await fbDeleteUser(cred.user);
+      });
+    } catch { /* Auth account might already be gone */ }
+    await deleteDoc(doc(db, 'users', user.id));
+    setBusy(false);
+  };
+
+  const handleSavePassword = async () => {
+    if (!editPass?.newPassword?.trim()) return;
+    setBusy(true);
+    try {
+      await withSecondaryApp(async (secAuth) => {
+        const cred = await fbSignIn(secAuth, editPass.email, editPass.password);
+        await updatePassword(cred.user, editPass.newPassword);
+      });
+      await updateDoc(doc(db, 'users', editPass.id), { password: editPass.newPassword });
+      setEditPass(null);
+    } catch (err) { alert('Erreur: ' + err.message); }
+    finally { setBusy(false); }
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}
+        className="card modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '520px', width: '100%' }}>
+        <div className="modal-header">
+          <h3>Gestion des Utilisateurs</h3>
+          <button onClick={onClose} className="btn-icon-sm"><X size={18} /></button>
+        </div>
+        <div className="modal-body">
+          <div className="admin-add-user">
+            <input className="input-field" placeholder="Nom affiché" value={newUser.name}
+              onChange={e => setNewUser({ ...newUser, name: e.target.value })} disabled={busy} />
+            <input type="email" className="input-field" placeholder="Email (optionnel)" value={newUser.email}
+              onChange={e => setNewUser({ ...newUser, email: e.target.value })} disabled={busy} />
+            <input type="password" className="input-field" placeholder="Mot de passe (6+ car.)" value={newUser.password}
+              onChange={e => setNewUser({ ...newUser, password: e.target.value })}
+              onKeyDown={e => e.key === 'Enter' && handleAdd()} disabled={busy} />
+            <select className="input-field" value={newUser.role}
+              onChange={e => setNewUser({ ...newUser, role: e.target.value })} disabled={busy}>
+              <option value="employee">Employé</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button className="btn btn-primary" onClick={handleAdd} disabled={busy}>
+              {busy ? '...' : <><Plus size={15} /> Ajouter</>}
+            </button>
+          </div>
+
+          <div className="user-list">
+            {users.map(user => (
+              <div key={user.id} className="user-row">
+                {editPass?.id === user.id ? (
+                  <div className="user-edit-pass">
+                    <span className="user-name">{user.name}</span>
+                    <input type="password" className="input-field" placeholder="Nouveau mot de passe"
+                      value={editPass.newPassword} autoFocus disabled={busy}
+                      onChange={e => setEditPass({ ...editPass, newPassword: e.target.value })}
+                      onKeyDown={e => e.key === 'Enter' && handleSavePassword()} />
+                    <button className="btn btn-primary btn-sm" onClick={handleSavePassword} disabled={busy}><Check size={14} /></button>
+                    <button className="btn btn-secondary btn-sm" onClick={() => setEditPass(null)} disabled={busy}><X size={14} /></button>
+                  </div>
+                ) : (
+                  <>
+                    <div className="user-info">
+                      <span className="user-name">{user.name}</span>
+                      <span className={`badge badge-role-${user.role}`}>{user.role === 'admin' ? 'Admin' : 'Employé'}</span>
+                    </div>
+                    <div className="user-actions">
+                      <button className="btn btn-secondary btn-sm" disabled={busy}
+                        onClick={() => setEditPass({ id: user.id, email: user.email, password: user.password, newPassword: '' })}>
+                        <Edit2 size={13} /> MDP
+                      </button>
+                      <button className="btn-icon-danger" disabled={busy}
+                        onClick={() => handleDelete(user)}><Trash2 size={14} /></button>
+                    </div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
 export default App;
