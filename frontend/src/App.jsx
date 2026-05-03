@@ -24,6 +24,7 @@ import {
   Edit2,
   DollarSign,
   Layout,
+  Inbox,
   Settings,
   ChevronLeft,
   ChevronRight,
@@ -38,6 +39,7 @@ import LoginPage from './LoginPage';
 import { format, startOfMonth, endOfMonth, addMonths } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import Dashboard from './Dashboard';
+import logo from './assets/logo-barid.png';
 import { db, auth, firebaseConfig } from './firebase';
 import {
   collection,
@@ -88,9 +90,10 @@ const translations = {
     type: "Détail Operation",
     matricule: "Matricule",
     client: "Client",
+    clientName: "Nom du client présenté",
     missing: "Les pièces manquantes",
-    ht: "Paiement Net",
-    tva: "Frais Paiement",
+    ht: "Net Payment",
+    tva: "Payment Fees",
     ttc: "Total TTC",
     duration: "Durée",
     priority: "Priorité",
@@ -125,9 +128,10 @@ const translations = {
     source: "PCE",
     type: "Operation Type",
     client: "Client",
+    clientName: "Client Name",
     missing: "Pièces Manquantes",
-    ht: "Amount HT",
-    tva: "TVA",
+    ht: "Net Payment",
+    tva: "Payment Fees",
     ttc: "Total TTC",
     duration: "Duration",
     priority: "Priority",
@@ -145,7 +149,7 @@ const translations = {
   }
 };
 
-const opTypes = ["Échange", "Duplicata", "Liquidation de crédit", "Mutation"];
+const opTypes = ["Mutation", "Change", "Duplicata", "Liquidation de crédit", "Déclaration", "Location", "Retrait", "Plus", "Moins"];
 
 function Toast({ message, type = 'success', onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, []);
@@ -174,7 +178,7 @@ function App() {
   const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
   const [passModal, setPassModal] = useState({ show: false, onConfirm: null });
   const [appPassword, setAppPassword] = useState('1234');
-  const [financialData, setFinancialData] = useState({ servicesTotal: 0, monthlyTotal: 0, fraisByDate: {} });
+  const [financialData, setFinancialData] = useState({ servicesTotal: 0, monthlyTotal: 0, fraisByDate: {}, demandesToday: 0, demandesTotal: 0 });
 
   // Auth — with 4s fallback timeout for slow mobile connections
   useEffect(() => {
@@ -239,20 +243,39 @@ function App() {
   }, []);
 
   // Single operations listener — shared across Sidebar, ProjectsView, Dashboard
+  // Zero-base: only sums the 'tva' (Frais) field — nothing else
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "operations"), snap => {
-      const map = {};
+      const fraisMap = {};
+      let totalOps = 0;
+      let todayOps = 0;
+      const todayStr = format(new Date(), 'yyyy-MM-dd');
+      const currentMonth = format(new Date(), 'yyyy-MM');
+
       snap.docs.forEach(d => {
         const data = d.data();
         const dateStr = data.date?.toDate ? data.date.toDate().toISOString().split('T')[0] : null;
-        if (dateStr) map[dateStr] = (map[dateStr] || 0) + Number(data.tva || 0);
+        if (dateStr) {
+          const fraisValue = Number(data.tva || 0);
+          fraisMap[dateStr] = (fraisMap[dateStr] || 0) + fraisValue;
+          totalOps++;
+          if (dateStr === todayStr) todayOps++;
+        }
       });
-      const todayStr = format(new Date(), 'yyyy-MM-dd');
-      const currentMonth = format(new Date(), 'yyyy-MM');
+
+      // Revenu du Jour = STRICTLY sum of Frais for today only
+      const dailyFrais = fraisMap[todayStr] || 0;
+      // Revenu du Mois = sum of Frais for the current month only
+      const monthlyFrais = Object.entries(fraisMap)
+        .filter(([d]) => d.startsWith(currentMonth))
+        .reduce((acc, [, v]) => acc + v, 0);
+
       setFinancialData({
-        servicesTotal: map[todayStr] || 0,
-        monthlyTotal: Object.entries(map).filter(([d]) => d.startsWith(currentMonth)).reduce((acc, [, v]) => acc + v, 0),
-        fraisByDate: map
+        servicesTotal: dailyFrais,
+        monthlyTotal: monthlyFrais,
+        fraisByDate: fraisMap,
+        demandesToday: todayOps,
+        demandesTotal: totalOps
       });
     });
     return () => unsub();
@@ -305,7 +328,8 @@ function App() {
           <header className="main-header">
             <div className="header-left">
               <button onClick={() => setIsSidebarOpen(true)} className="mobile-menu-btn"><Menu size={24} /></button>
-              <h1 className="header-title">ProjectFlow</h1>
+              <img src={logo} alt="Logo" className="header-logo" style={{ height: '55px', width: 'auto', marginRight: '15px', display: 'none' }} />
+              <h1 className="header-title">Baridcash Janati</h1>
             </div>
             <div className="header-right">
               <span className="user-name-badge">{currentUser.name}</span>
@@ -328,7 +352,7 @@ function App() {
           <main className="main-content">
             <Routes>
               <Route path="/" element={<ProjectsView projects={projects} t={t} setPassModal={setPassModal} currentUser={currentUser} financialData={financialData} onAdd={() => { setEditingProject(null); setModalOpen(true); }} onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} />} />
-              <Route path="/project/:id" element={<ProjectDetails projects={projects} t={t} setPassModal={setPassModal} onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} />} />
+              <Route path="/project/:id" element={<ProjectDetails projects={projects} t={t} setPassModal={setPassModal} currentUser={currentUser} onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} />} />
               <Route path="/dashboard" element={<Dashboard t={t} setPassModal={setPassModal} currentUser={currentUser} financialData={financialData} />} />
             </Routes>
           </main>
@@ -466,8 +490,8 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen, isCollapsed, setIsCollapsed,
       <div className={`sidebar-overlay ${isSidebarOpen ? 'show' : ''}`} onClick={() => setIsSidebarOpen(false)}></div>
       <aside className={`sidebar ${isSidebarOpen ? 'open' : ''} ${isCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-logo">
-          <div className="logo-box">PF</div>
-          {!isCollapsed && <span>ProjectFlow</span>}
+          <img src={logo} alt="Logo" style={{ height: '55px', width: 'auto', marginRight: !isCollapsed ? '8px' : '0' }} />
+          {!isCollapsed && <span>Baridcash Janati</span>}
           <button className="collapse-toggle" onClick={() => setIsCollapsed(!isCollapsed)}>
             {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
           </button>
@@ -503,6 +527,8 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen, isCollapsed, setIsCollapsed,
 function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, financialData = {} }) {
   const [tasks, setTasks] = useState([]);
   const [showTasksModal, setShowTasksModal] = useState(false);
+  const [demandes, setDemandes] = useState([]);
+  const [showDemandesModal, setShowDemandesModal] = useState(false);
   const [settings, setSettings] = useState({ monthly_target: 10000, daily_target: 500 });
 
   const { servicesTotal = 0, monthlyTotal = 0 } = financialData;
@@ -511,13 +537,17 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
     const unsubTasks = onSnapshot(collection(db, "global_tasks"), snap => {
       setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
+    const unsubDemandes = onSnapshot(collection(db, "demandes"), snap => {
+      setDemandes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
     const unsubSettings = onSnapshot(doc(db, "settings", "global"), docSnap => {
       if(docSnap.exists()) setSettings(docSnap.data());
     });
-    return () => { unsubTasks(); unsubSettings(); };
+    return () => { unsubTasks(); unsubDemandes(); unsubSettings(); };
   }, []);
 
   const pendingTasks = tasks.filter(t => !t.completed).length;
+  const pendingDemandes = demandes.filter(d => !d.completed).length;
   const progressDaily  = Math.min((servicesTotal  / (settings.daily_target  || 1)) * 100, 100).toFixed(1);
   const progressMonthly = Math.min((monthlyTotal / (settings.monthly_target || 1)) * 100, 100).toFixed(1);
 
@@ -531,11 +561,11 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
         <button className="btn btn-primary" onClick={onAdd}><Plus size={18} /> {t.newProject}</button>
       </div>
 
-      <div className="stats-grid" style={{ marginBottom: '32px' }}>
-        {/* Card 1 — Tasks */}
+      <div className={`stats-grid ${currentUser?.role === 'admin' ? 'stats-grid-4' : 'stats-grid-2'}`} style={{ marginBottom: '32px' }}>
+        {/* Card 1 — Tâches */}
         <div className="card stat-card" style={{ borderLeft: '4px solid #ef4444', cursor: 'pointer' }} onClick={() => setShowTasksModal(true)}>
           <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-            <span>Tâches (Tasks)</span>
+            <span>Tâches</span>
             <CheckCircle2 size={16} color="#ef4444" />
           </div>
           <div className="stat-value" style={{ color: pendingTasks > 0 ? '#ef4444' : 'var(--text-primary)' }}>
@@ -543,34 +573,45 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
           </div>
         </div>
 
-        {currentUser?.role === 'admin' && (
-          <>
-            {/* Card 2 — Objectif Journalier */}
-            <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
-              <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Objectif Journalier</span>
-                <TrendingUp size={16} color="#10b981" />
-              </div>
-              <div className="stat-value">{servicesTotal.toLocaleString()} <span className="currency">DH</span></div>
-              <div className="progress-bg" style={{ marginTop: '10px' }}>
-                <div className="progress-fill" style={{ width: `${progressDaily}%`, background: '#10b981' }}></div>
-              </div>
-              <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressDaily}% de {settings.daily_target} DH</div>
-            </div>
+        {/* Card 2 — Les Demandes */}
+        <div className="card stat-card" style={{ borderLeft: '4px solid #8b5cf6', cursor: 'pointer' }} onClick={() => setShowDemandesModal(true)}>
+          <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <span>Les Demandes</span>
+            <Inbox size={16} color="#8b5cf6" />
+          </div>
+          <div className="stat-value" style={{ color: pendingDemandes > 0 ? '#8b5cf6' : 'var(--text-primary)' }}>
+            {pendingDemandes} <span style={{ fontSize: '14px', color: 'var(--text-secondary)' }}>En attente</span>
+          </div>
+        </div>
 
-            {/* Card 3 — Objectifs du Mois */}
-            <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
-              <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
-                <span>Objectifs du Mois</span>
-                <Target size={16} color="var(--accent-color)" />
-              </div>
-              <div className="stat-value">{monthlyTotal.toLocaleString()} <span className="currency">DH</span></div>
-              <div className="progress-bg" style={{ marginTop: '10px' }}>
-                <div className="progress-fill" style={{ width: `${progressMonthly}%`, background: 'var(--accent-color)' }}></div>
-              </div>
-              <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressMonthly}% de {settings.monthly_target} DH</div>
+        {/* Card 3 — Revenu du Jour (admin only) */}
+        {currentUser?.role === 'admin' && (
+          <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
+            <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Revenu du Jour</span>
+              <TrendingUp size={16} color="#10b981" />
             </div>
-          </>
+            <div className="stat-value">{servicesTotal.toLocaleString()} <span className="currency">DH</span></div>
+            <div className="progress-bg" style={{ marginTop: '10px' }}>
+              <div className="progress-fill" style={{ width: `${progressDaily}%`, background: '#10b981' }}></div>
+            </div>
+            <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressDaily}% de {settings.daily_target} DH</div>
+          </div>
+        )}
+
+        {/* Card 4 — Revenu du Mois (admin only) */}
+        {currentUser?.role === 'admin' && (
+          <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
+            <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
+              <span>Revenu du Mois</span>
+              <Target size={16} color="var(--accent-color)" />
+            </div>
+            <div className="stat-value">{monthlyTotal.toLocaleString()} <span className="currency">DH</span></div>
+            <div className="progress-bg" style={{ marginTop: '10px' }}>
+              <div className="progress-fill" style={{ width: `${progressMonthly}%`, background: 'var(--accent-color)' }}></div>
+            </div>
+            <div style={{ fontSize: '12px', marginTop: '5px', color: 'var(--text-secondary)' }}>{progressMonthly}% de {settings.monthly_target} DH</div>
+          </div>
         )}
       </div>
 
@@ -589,14 +630,65 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
 
       <AnimatePresence>
         {showTasksModal && (
-          <TasksModal tasks={tasks} onClose={() => setShowTasksModal(false)} t={t} setPassModal={setPassModal} />
+          <TasksModal tasks={tasks} onClose={() => setShowTasksModal(false)} t={t} setPassModal={setPassModal} currentUser={currentUser} />
+        )}
+        {showDemandesModal && (
+          <DemandesModal demandes={demandes} onClose={() => setShowDemandesModal(false)} t={t} setPassModal={setPassModal} currentUser={currentUser} />
         )}
       </AnimatePresence>
     </motion.div>
   );
 }
 
-function TasksModal({ tasks, onClose, t, setPassModal }) {
+function DemandesModal({ demandes, onClose, t, setPassModal, currentUser }) {
+  const [newDemandeTitle, setNewDemandeTitle] = useState('');
+  const handleAddDemande = async () => {
+    if(!newDemandeTitle) return;
+    await addDoc(collection(db, "demandes"), { title: newDemandeTitle, completed: false, createdAt: serverTimestamp(), created_by: currentUser?.name || 'Staff' });
+    setNewDemandeTitle('');
+  };
+
+  return (
+    <div className="modal-overlay" onClick={onClose}>
+      <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }} className="card modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+        <div className="modal-header">
+          <h3>Les Demandes</h3>
+          <button onClick={onClose} className="btn-icon-sm"><X /></button>
+        </div>
+        <div className="modal-body">
+          <div className="task-list">
+            {demandes.map(demande => (
+              <div key={demande.id} className="task-row">
+                <div className="task-main">
+                  <div onClick={() => updateDoc(doc(db, "demandes", demande.id), { completed: !demande.completed })}
+                    className={`checkbox ${demande.completed ? 'checked' : ''}`}>
+                    {demande.completed && <Check size={14} color="white" />}
+                  </div>
+                  <span className={demande.completed ? 'completed' : ''}>
+                    {demande.title}
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>({demande.created_by})</span>
+                  </span>
+                </div>
+                <button className="btn-icon-danger" onClick={() => {
+                  setPassModal({ 
+                    show: true, 
+                    onConfirm: () => deleteDoc(doc(db, "demandes", demande.id)) 
+                  });
+                }}><Trash2 size={14} /></button>
+              </div>
+            ))}
+          </div>
+          <div className="task-input-box" style={{ marginTop: '20px' }}>
+            <input className="input-field" placeholder="Nouvelle demande..." value={newDemandeTitle} onChange={e => setNewDemandeTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddDemande()} />
+            <button className="btn btn-primary" onClick={handleAddDemande}><Plus size={18} /></button>
+          </div>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+function TasksModal({ tasks, onClose, t, setPassModal, currentUser }) {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const handleAddTask = async () => {
     if(!newTaskTitle) return;
@@ -622,19 +714,23 @@ function TasksModal({ tasks, onClose, t, setPassModal }) {
                   </div>
                   <span className={task.completed ? 'completed' : ''}>{task.title}</span>
                 </div>
-                <button className="btn-icon-danger" onClick={() => {
-                  setPassModal({ 
-                    show: true, 
-                    onConfirm: () => deleteDoc(doc(db, "global_tasks", task.id)) 
-                  });
-                }}><Trash2 size={14} /></button>
+                {currentUser?.role === 'admin' && (
+                  <button className="btn-icon-danger" onClick={() => {
+                    setPassModal({ 
+                      show: true, 
+                      onConfirm: () => deleteDoc(doc(db, "global_tasks", task.id)) 
+                    });
+                  }}><Trash2 size={14} /></button>
+                )}
               </div>
             ))}
           </div>
-          <div className="task-input-box" style={{ marginTop: '20px' }}>
-            <input className="input-field" placeholder="Ajouter une tâche..." value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddTask()} />
-            <button className="btn btn-primary" onClick={handleAddTask}><Plus size={18} /></button>
-          </div>
+          {currentUser?.role === 'admin' && (
+            <div className="task-input-box" style={{ marginTop: '20px' }}>
+              <input className="input-field" placeholder="Ajouter une tâche..." value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddTask()} />
+              <button className="btn btn-primary" onClick={handleAddTask}><Plus size={18} /></button>
+            </div>
+          )}
         </div>
       </motion.div>
     </div>
@@ -723,14 +819,14 @@ function ProjectCard({ project, t, onEdit, setPassModal }) {
   );
 }
 
-function ProjectDetails({ projects, t, onEdit, setPassModal }) {
+function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
   const { id } = useParams();
   const nav = useNavigate();
   const project = projects.find(p => p.id === id);
   const [operations, setOperations] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [activeTab, setActiveTab] = useState('ops');
-  const [newOp, setNewOp] = useState({ date: format(new Date(), 'yyyy-MM-dd'), source: 'SGO', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
+  const [newOp, setNewOp] = useState({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGE', type: opTypes[0], matricule: '', client: false, client_name: '', missing: '', amount_ht: '', tva: '' });
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [editingMissing, setEditingMissing] = useState(null);
 
@@ -759,17 +855,19 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
   if (!project) return <div className="loading-screen">{t.loading}</div>;
 
   const handleAddOp = async () => {
-    const ht = Number(newOp.amount_ht);
-    if (!newOp.amount_ht || isNaN(ht) || ht <= 0) {
-      alert('Entrez le Paiement Net (> 0)');
+    const ht = Number(newOp.amount_ht) || 0;
+    const frais = Number(newOp.tva) || 0;
+    // Require HT to be entered
+    if (newOp.amount_ht === '' || isNaN(ht) || ht < 0) {
+      alert('Entrez le Paiement Net (>= 0)');
       return;
     }
     try {
       await addDoc(collection(db, "operations"), {
         ...newOp, project_id: id, date: Timestamp.fromDate(new Date(newOp.date)),
-        amount_ht: ht, tva: Number(newOp.tva) || 0
+        amount_ht: ht, tva: frais, client_name: newOp.client_name || '', created_by: currentUser?.name || 'Staff'
       });
-      setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'SGO', type: opTypes[0], matricule: '', client: false, missing: '', amount_ht: '', tva: '' });
+      setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGE', type: opTypes[0], matricule: '', client: false, client_name: '', missing: '', amount_ht: '', tva: '' });
     } catch (err) { console.error(err); alert('Erreur: ' + err.message); }
   };
 
@@ -789,13 +887,7 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
         </div>
       </div>
 
-      <div className="tabs">
-        <button className={`tab ${activeTab === 'ops' ? 'active' : ''}`} onClick={() => setActiveTab('ops')}><DollarSign size={16} /> {t.operations}</button>
-        <button className={`tab ${activeTab === 'tasks' ? 'active' : ''}`} onClick={() => setActiveTab('tasks')}><CheckCircle2 size={16} /> {t.tasks}</button>
-      </div>
-      
       <div className="tab-content">
-        {activeTab === 'ops' ? (
           <>
             {/* ── Form fixe ── */}
             <div className="card op-form-card">
@@ -806,19 +898,39 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
                 </div>
                 <div className="form-group-sm">
                   <label className="label">{t.source}</label>
-                  <select className="input-field" value={newOp.source} onChange={e => setNewOp({...newOp, source: e.target.value})}>
-                    <option>SGO</option><option>PCE</option>
+                  <select className="input-field" value={newOp.source} onChange={e => {
+                    const val = e.target.value;
+                    let nextType = newOp.type;
+                    if (val === 'Delivery') {
+                      nextType = 'Autre ville';
+                    } else if (newOp.source === 'Delivery') {
+                      nextType = opTypes[0];
+                    }
+                    setNewOp({...newOp, source: val, type: nextType});
+                  }}>
+                    <option>CGE</option><option>PCE</option><option>La Caisse</option><option>Infraction</option><option>Delivery</option>
                   </select>
                 </div>
                 <div className="form-group-sm">
                   <label className="label">{t.type}</label>
                   <select className="input-field" value={newOp.type} onChange={e => setNewOp({...newOp, type: e.target.value})}>
-                    {opTypes.map(o => <option key={o}>{o}</option>)}
+                    {newOp.source === 'Delivery' ? (
+                      <>
+                        <option>Sur fes</option>
+                        <option>Autre ville</option>
+                      </>
+                    ) : (
+                      opTypes.map(o => <option key={o}>{o}</option>)
+                    )}
                   </select>
                 </div>
                 <div className="form-group-sm">
                   <label className="label">{t.matricule}</label>
                   <input type="text" className="input-field" value={newOp.matricule} onChange={e => setNewOp({...newOp, matricule: e.target.value})} placeholder={t.matricule} />
+                </div>
+                <div className="form-group-sm">
+                  <label className="label">{t.clientName}</label>
+                  <input type="text" className="input-field" value={newOp.client_name} onChange={e => setNewOp({...newOp, client_name: e.target.value})} placeholder={t.clientName} />
                 </div>
                 <div className="form-group-sm">
                   <label className="label">{t.ht}</label>
@@ -853,11 +965,17 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
                       <th>{t.source}</th>
                       <th>{t.type}</th>
                       <th>{t.matricule}</th>
+                      <th>{t.clientName}</th>
                       <th>{t.client}</th>
                       <th>{t.missing}</th>
-                      <th>{t.ht}</th>
-                      <th>{t.tva}</th>
-                      <th>{t.ttc}</th>
+                      {currentUser?.role === 'admin' && (
+                        <>
+                          <th>Créé par</th>
+                          <th>{t.ht}</th>
+                          <th>{t.tva}</th>
+                          <th>{t.ttc}</th>
+                        </>
+                      )}
                       <th></th>
                     </tr>
                   </thead>
@@ -868,6 +986,7 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
                         <td className="td-source">{op.source}</td>
                         <td><span className="badge badge-low">{op.type}</span></td>
                         <td className="td-center">{op.matricule || '--'}</td>
+                        <td className="td-center">{op.client_name || '--'}</td>
                         <td className="td-center">{op.client ? <Check size={16} color="#10b981" /> : <X size={16} color="#ef4444" />}</td>
                         <td className="td-missing">
                           <div className="missing-box">
@@ -875,9 +994,14 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
                             <button onClick={() => setEditingMissing({ id: op.id, text: op.missing || '' })} className="btn-icon-xs"><Edit2 size={11} /></button>
                           </div>
                         </td>
-                        <td className="td-amount">{Number(op.amount_ht || 0).toLocaleString()}</td>
-                        <td className="td-amount">{Number(op.tva || 0).toLocaleString()}</td>
-                        <td className="td-ttc">{(Number(op.amount_ht || 0) + Number(op.tva || 0)).toLocaleString()}</td>
+                        {currentUser?.role === 'admin' && (
+                          <>
+                            <td className="td-center"><span className="badge badge-role-employee" style={{ fontSize: '10px' }}>{op.created_by || '--'}</span></td>
+                            <td className="td-amount">{Number(op.amount_ht || 0).toLocaleString()}</td>
+                            <td className="td-amount">{Number(op.tva || 0).toLocaleString()}</td>
+                            <td className="td-ttc">{(Number(op.amount_ht || 0) + Number(op.tva || 0)).toLocaleString()}</td>
+                          </>
+                        )}
                         <td><button className="btn-icon-danger" onClick={() => {
                           setPassModal({
                             show: true,
@@ -891,33 +1015,6 @@ function ProjectDetails({ projects, t, onEdit, setPassModal }) {
               </div>
             </div>
           </>
-        ) : (
-          <div className="card task-container-large">
-            <div className="task-list">
-              {tasks.map(task => (
-                <div key={task.id} className="task-row">
-                  <div className="task-main">
-                    <div onClick={() => updateDoc(doc(db, "tasks", task.id), { completed: !task.completed })}
-                      className={`checkbox ${task.completed ? 'checked' : ''}`}>
-                      {task.completed && <Check size={14} color="white" />}
-                    </div>
-                    <span className={task.completed ? 'completed' : ''}>{task.title}</span>
-                  </div>
-                  <button className="btn-icon-danger" onClick={() => {
-                    setPassModal({
-                      show: true,
-                      onConfirm: () => deleteDoc(doc(db, "tasks", task.id))
-                    });
-                  }}><Trash2 size={14} /></button>
-                </div>
-              ))}
-              <div className="task-input-box">
-                <input className="input-field" placeholder={t.newTask} value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && (async () => { if(!newTaskTitle) return; await addDoc(collection(db, "tasks"), { project_id: id, title: newTaskTitle, completed: false, createdAt: serverTimestamp() }); setNewTaskTitle(''); })()} />
-                <button className="btn btn-primary" onClick={async () => { if(!newTaskTitle) return; await addDoc(collection(db, "tasks"), { project_id: id, title: newTaskTitle, completed: false, createdAt: serverTimestamp() }); setNewTaskTitle(''); }}><Plus size={18} /></button>
-              </div>
-            </div>
-          </div>
-        )}
       </div>
 
       <AnimatePresence>

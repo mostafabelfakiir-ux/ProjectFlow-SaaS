@@ -4,16 +4,16 @@
    CSS Variables - Clean & Minimal
    =========================== */
 :root {
-  --accent: #2563eb;
+  --accent: #e37222;
   --accent-color: var(--accent);
-  --accent-hover: #1d4ed8;
-  --accent-light: #eff6ff;
+  --accent-hover: #c55d16;
+  --accent-light: #fff3e0;
   --bg-main: #f7f8fa;
   --bg-card: #ffffff;
   --bg-input: #f9fafb;
   --bg-hover: #f3f4f6;
-  --text-primary: #111827;
-  --text-secondary: #6b7280;
+  --text-primary: #5d4f48;
+  --text-secondary: #7a6b63;
   --text-muted: #9ca3af;
   --border: #e5e7eb;
   --border-light: #f3f4f6;
@@ -186,7 +186,7 @@ body {
 
 .logo-box {
   width: 34px; height: 34px;
-  background: linear-gradient(135deg, var(--accent), #7c3aed);
+  background: var(--accent);
   border-radius: 9px;
   flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -194,7 +194,7 @@ body {
   font-size: 13px;
   font-weight: 800;
   letter-spacing: -0.5px;
-  box-shadow: 0 2px 8px rgba(37,99,235,0.25);
+  box-shadow: 0 2px 8px rgba(227, 114, 34, 0.25);
 }
 
 .collapse-toggle {
@@ -641,6 +641,12 @@ tr:hover { background: var(--bg-hover); }
   grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
   gap: 16px; margin-bottom: 28px;
 }
+.stats-grid.stats-grid-4 {
+  grid-template-columns: repeat(4, 1fr);
+}
+.stats-grid.stats-grid-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
 .stat-card { padding: 22px 24px; }
 .stat-label {
   font-size: 11.5px; font-weight: 700; color: var(--text-muted);
@@ -741,6 +747,7 @@ span.completed { text-decoration: line-through; color: var(--text-muted); }
   .collapse-toggle { display: none !important; }
   .close-sidebar { display: block; }
   .mobile-menu-btn { display: flex; }
+  .header-logo { display: block !important; }
   .header-title { display: block; }
   .main-header { padding: 0 16px; height: 52px; }
   .user-name-badge { display: none; }
@@ -750,6 +757,7 @@ span.completed { text-decoration: line-through; color: var(--text-muted); }
   .content-wrapper { width: 100% !important; }
   .project-grid { grid-template-columns: 1fr; gap: 12px; }
   .stats-grid { grid-template-columns: repeat(2, 1fr); gap: 12px; }
+  .stats-grid.stats-grid-4 { grid-template-columns: repeat(2, 1fr); }
   .op-form-grid { grid-template-columns: repeat(2, 1fr); }
   .form-row { grid-template-columns: 1fr; }
   .modal-content { max-height: 90vh; margin: 8px; }
@@ -892,6 +900,7 @@ span.completed { text-decoration: line-through; color: var(--text-muted); }
   .tabs { width: 100%; }
   .tab { flex: 1; justify-content: center; font-size: 13px; padding: 10px 8px; }
   .stats-grid { grid-template-columns: 1fr; }
+  .stats-grid.stats-grid-4 { grid-template-columns: 1fr; }
   .op-form-grid { grid-template-columns: 1fr; }
   .op-ttc-btn { flex-wrap: wrap; }
 

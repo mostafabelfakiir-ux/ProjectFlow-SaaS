@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { auth, db } from './firebase';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { collection, getDocs, query, where, doc, setDoc, serverTimestamp } from 'firebase/firestore';
+import logo from './assets/logo-barid.png';
 
 export const nameToEmail = (name) =>
   `${name.trim().toLowerCase().replace(/\s+/g, '_')}@pf.app`;
@@ -11,12 +12,17 @@ export const nameToEmail = (name) =>
 export const toFirebaseEmail = (input) =>
   input.includes('@') ? input.trim().toLowerCase() : nameToEmail(input);
 
+// Admin recovery email — swap this once testing is confirmed
+const ADMIN_RECOVERY_EMAIL = 'ayoub00janati@gmail.com';
+
 export default function LoginPage() {
   const [identifier, setIdentifier] = useState('');
   const [password, setPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showForgot, setShowForgot] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const [migrationUser, setMigrationUser] = useState(null);
 
   const handleLogin = async (e) => {
@@ -95,6 +101,19 @@ export default function LoginPage() {
     }
   };
 
+  const handleResetPassword = async () => {
+    setLoading(true);
+    setError('');
+    try {
+      await sendPasswordResetEmail(auth, ADMIN_RECOVERY_EMAIL);
+      setResetSent(true);
+    } catch (err) {
+      setError('Erreur : ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleMigration = async (e) => {
     e.preventDefault();
     if (newPassword.length < 6) { setError('Minimum 6 caractères'); return; }
@@ -118,7 +137,7 @@ export default function LoginPage() {
       <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
         <motion.div initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="card" style={{ width: '100%', maxWidth: '380px', padding: '36px 32px' }}>
           <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-            <div className="logo-box" style={{ margin: '0 auto 14px', width: '54px', height: '54px', fontSize: '20px', borderRadius: '14px' }}>PF</div>
+            <img src={logo} alt="Logo" style={{ margin: '0 auto 14px', height: '55px', width: 'auto', display: 'block' }} />
             <h1 style={{ fontSize: '20px', fontWeight: '800' }}>Nouveau mot de passe</h1>
             <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '6px' }}>
               Bonjour <strong>{migrationUser.name}</strong> — choisissez un nouveau mot de passe (min. 6 caractères).
@@ -144,34 +163,66 @@ export default function LoginPage() {
     <div style={{ position: 'fixed', inset: 0, background: 'var(--bg-main)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '16px' }}>
       <motion.div initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="card" style={{ width: '100%', maxWidth: '380px', padding: '36px 32px' }}>
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
-          <div className="logo-box" style={{ margin: '0 auto 14px', width: '54px', height: '54px', fontSize: '20px', borderRadius: '14px' }}>PF</div>
-          <h1 style={{ fontSize: '22px', fontWeight: '800' }}>ProjectFlow</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>Connectez-vous pour continuer</p>
+          <img src={logo} alt="Logo" style={{ margin: '0 auto 14px', height: '55px', width: 'auto', display: 'block' }} />
+          <h1 style={{ fontSize: '22px', fontWeight: '800' }}>Baridcash Janati</h1>
+          <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
+            {showForgot ? 'Réinitialisation du mot de passe Admin' : 'Connectez-vous pour continuer'}
+          </p>
         </div>
-        <form onSubmit={handleLogin} autoComplete="off">
-          <div className="form-group">
-            <label className="label">Nom d'utilisateur</label>
-            <input
-              className="input-field"
-              value={identifier}
-              onChange={e => setIdentifier(e.target.value)}
-              placeholder="Votre nom"
-              autoFocus
-              autoComplete="off"
-              name="pf-username"
-            />
+
+        {resetSent ? (
+          <div style={{ textAlign: 'center' }}>
+            <div style={{ background: 'var(--accent-light)', color: 'var(--accent)', padding: '12px', borderRadius: '8px', marginBottom: '20px', fontSize: '13px', fontWeight: '600' }}>
+              E-mail de réinitialisation envoyé ! ✓
+            </div>
+            <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => { setShowForgot(false); setResetSent(false); }}>
+              Retour à la connexion
+            </button>
           </div>
-          <div className="form-group" style={{ marginTop: '12px' }}>
-            <label className="label">Mot de passe</label>
-            <input type="password" className="input-field" value={password}
-              onChange={e => setPassword(e.target.value)} placeholder="••••••"
-              autoComplete="off" name="pf-password" />
+        ) : showForgot ? (
+          <div>
+            <p style={{ fontSize: '13px', color: 'var(--text-secondary)', textAlign: 'center', lineHeight: '1.6', marginBottom: '20px' }}>
+              Un lien de réinitialisation sera envoyé à l'email de l'Admin.
+            </p>
+            {error && <p style={{ color: 'var(--danger)', fontSize: '13px', margin: '0 0 10px', textAlign: 'center' }}>{error}</p>}
+            <button className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', padding: '12px' }} onClick={handleResetPassword} disabled={loading}>
+              {loading ? 'Envoi...' : 'Envoyer le lien'}
+            </button>
+            <button type="button" className="btn btn-secondary" style={{ width: '100%', justifyContent: 'center', marginTop: '10px', border: 'none', background: 'transparent' }} onClick={() => setShowForgot(false)}>
+              Annuler
+            </button>
           </div>
-          {error && <p style={{ color: 'var(--danger)', fontSize: '13px', margin: '10px 0', textAlign: 'center' }}>{error}</p>}
-          <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: '16px', padding: '12px' }} disabled={loading}>
-            {loading ? 'Connexion...' : 'Se connecter'}
-          </button>
-        </form>
+        ) : (
+          <form onSubmit={handleLogin} autoComplete="off">
+            <div className="form-group">
+              <label className="label">Nom d'utilisateur</label>
+              <input
+                className="input-field"
+                value={identifier}
+                onChange={e => setIdentifier(e.target.value)}
+                placeholder="Votre nom"
+                autoFocus
+                autoComplete="off"
+                name="pf-username"
+              />
+            </div>
+            <div className="form-group" style={{ marginTop: '12px' }}>
+              <label className="label">Mot de passe</label>
+              <input type="password" className="input-field" value={password}
+                onChange={e => setPassword(e.target.value)} placeholder="••••••"
+                autoComplete="off" name="pf-password" />
+              <div style={{ textAlign: 'right', marginTop: '6px' }}>
+                <button type="button" onClick={() => setShowForgot(true)} style={{ background: 'none', border: 'none', color: '#e37222', fontSize: '12px', fontWeight: '600', cursor: 'pointer', padding: 0, textDecoration: 'underline' }}>
+                  Mot de passe oublié ?
+                </button>
+              </div>
+            </div>
+            {error && <p style={{ color: 'var(--danger)', fontSize: '13px', margin: '10px 0', textAlign: 'center' }}>{error}</p>}
+            <button type="submit" className="btn btn-primary" style={{ width: '100%', justifyContent: 'center', marginTop: '16px', padding: '12px' }} disabled={loading}>
+              {loading ? 'Connexion...' : 'Se connecter'}
+            </button>
+          </form>
+        )}
       </motion.div>
     </div>
   );

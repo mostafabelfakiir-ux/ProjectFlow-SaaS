@@ -31,7 +31,7 @@ async function seedFirestore() {
     await addDoc(collection(db, "operations"), {
       project_id: p1Ref.id,
       date: Timestamp.fromDate(new Date()),
-      source: "SGE",
+      source: "CGE",
       type: "Achat Matériel",
       is_client_present: true,
       is_docs_complete: true,

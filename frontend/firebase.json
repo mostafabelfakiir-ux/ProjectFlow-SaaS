@@ -1,5 +1,6 @@
 {
   "hosting": {
+    "site": "project-management-98bdc",
     "public": "dist",
     "ignore": [
       "firebase.json",
