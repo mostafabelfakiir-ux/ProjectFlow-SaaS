@@ -39,13 +39,14 @@ import LoginPage from './LoginPage';
 import { format, startOfMonth, endOfMonth, addMonths } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import Dashboard from './Dashboard';
-import logo from './assets/logo-barid.png';
+import logo from './assets/logo-opsmaster.png';
 import { db, auth, firebaseConfig } from './firebase';
 import {
   collection,
   addDoc,
   onSnapshot,
   query,
+  orderBy,
   doc,
   updateDoc,
   deleteDoc,
@@ -68,6 +69,8 @@ import {
 import { initializeApp, deleteApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { nameToEmail, toFirebaseEmail } from './LoginPage';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 const translations = {
   fr: {
@@ -89,11 +92,10 @@ const translations = {
     source: "Type Operation",
     type: "Détail Operation",
     matricule: "Matricule",
-    client: "Client",
-    clientName: "Nom du client présenté",
+    cin: "CIN / ID",
     missing: "Les pièces manquantes",
-    ht: "Net Payment",
-    tva: "Payment Fees",
+    ht: "Paiement Net",
+    tva: "Frais",
     ttc: "Total TTC",
     duration: "Durée",
     priority: "Priorité",
@@ -107,7 +109,10 @@ const translations = {
     loading: "Chargement...",
     editMissing: "Éditer Pièces Manquantes",
     enterPassword: "Entrez le mot de passe pour supprimer",
-    wrongPassword: "Mot de passe incorrect !"
+    wrongPassword: "Mot de passe incorrect !",
+    downloadPdf: "Télécharger PDF",
+    searchPlaceholder: "Rechercher...",
+    projectCreated: "Projet créé ✓"
   },
   en: {
     projects: "Projects",
@@ -127,7 +132,7 @@ const translations = {
     date: "Date",
     source: "PCE",
     type: "Operation Type",
-    client: "Client",
+    cin: "ID Card",
     clientName: "Client Name",
     missing: "Pièces Manquantes",
     ht: "Net Payment",
@@ -145,11 +150,23 @@ const translations = {
     loading: "Loading...",
     editMissing: "Edit Pièces Manquantes",
     enterPassword: "Enter password to delete",
-    wrongPassword: "Incorrect password!"
+    wrongPassword: "Incorrect password!",
+    downloadPdf: "Download PDF",
+    searchPlaceholder: "Search...",
+    projectCreated: "Project created ✓"
   }
 };
 
-const opTypes = ["Mutation", "Change", "Duplicata", "Liquidation de crédit", "Déclaration", "Location", "Retrait", "Plus", "Moins"];
+// Conditional detail options per operation type
+const opDetailMap = {
+  'CGE': ['Mutation', 'Change', 'Duplicata', 'Liquidation de crédit'],
+  'PCE': ['Change', 'Duplicata'],
+  'La Caisse': ['Plus', 'Moins'],
+  'Infraction': ['Déclaration', 'Location'],
+  'Delivery': ['Surface', 'Outre-mer']
+};
+
+const getDetailOptions = (source) => opDetailMap[source] || opDetailMap['CGE'];
 
 function Toast({ message, type = 'success', onClose }) {
   useEffect(() => { const t = setTimeout(onClose, 3000); return () => clearTimeout(t); }, []);
@@ -179,6 +196,29 @@ function App() {
   const [passModal, setPassModal] = useState({ show: false, onConfirm: null });
   const [appPassword, setAppPassword] = useState('1234');
   const [financialData, setFinancialData] = useState({ servicesTotal: 0, monthlyTotal: 0, fraisByDate: {}, demandesToday: 0, demandesTotal: 0 });
+
+  // Auto Logout after 5 minutes of inactivity
+  useEffect(() => {
+    if (!currentUser) return;
+    
+    let timer;
+    const resetTimer = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        handleLogout();
+        showToast('Session expirée pour inactivité', 'error');
+      }, 5 * 60 * 1000); // 5 minutes
+    };
+
+    const events = ['mousedown', 'mousemove', 'keypress', 'scroll', 'touchstart'];
+    events.forEach(evt => document.addEventListener(evt, resetTimer));
+    resetTimer();
+
+    return () => {
+      events.forEach(evt => document.removeEventListener(evt, resetTimer));
+      clearTimeout(timer);
+    };
+  }, [currentUser]);
 
   // Auth — with 4s fallback timeout for slow mobile connections
   useEffect(() => {
@@ -222,10 +262,12 @@ function App() {
     return () => unsub();
   }, []);
 
-  // Projects listener — 3s timeout
+  // Projects listener
   useEffect(() => {
+    if (!currentUser) return;
+    const qProjects = collection(db, "projects");
     const timeout = setTimeout(() => setLoading(false), 3000);
-    const unsub = onSnapshot(collection(db, "projects"), (snapshot) => {
+    const unsub = onSnapshot(qProjects, (snapshot) => {
       clearTimeout(timeout);
       const list = snapshot.docs.map(d => {
         const data = d.data();
@@ -240,12 +282,14 @@ function App() {
       setLoading(false);
     }, () => { clearTimeout(timeout); setLoading(false); });
     return () => { unsub(); clearTimeout(timeout); };
-  }, []);
+  }, [currentUser]);
 
   // Single operations listener — shared across Sidebar, ProjectsView, Dashboard
   // Zero-base: only sums the 'tva' (Frais) field — nothing else
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, "operations"), snap => {
+    if (!currentUser) return;
+    const qOps = collection(db, "operations");
+    const unsub = onSnapshot(qOps, snap => {
       const fraisMap = {};
       let totalOps = 0;
       let todayOps = 0;
@@ -279,7 +323,7 @@ function App() {
       });
     });
     return () => unsub();
-  }, []);
+  }, [currentUser]);
 
   const showToast = (message, type = 'success') => setToast({ message, type });
 
@@ -328,16 +372,17 @@ function App() {
           <header className="main-header">
             <div className="header-left">
               <button onClick={() => setIsSidebarOpen(true)} className="mobile-menu-btn"><Menu size={24} /></button>
-              <img src={logo} alt="Logo" className="header-logo" style={{ height: '55px', width: 'auto', marginRight: '15px', display: 'none' }} />
-              <h1 className="header-title">Baridcash Janati</h1>
+              <img src={logo} alt="OpsMaster" className="header-logo" style={{ height: '55px', width: 'auto', marginRight: '8px', display: 'none' }} />
+              <h1 className="logo-text">OpsMaster</h1>
             </div>
             <div className="header-right">
               <span className="user-name-badge">{currentUser.name}</span>
-              {currentUser.role === 'admin' && (
+              {currentUser.role !== 'employee' && (
                 <button className="btn btn-secondary btn-sm" onClick={() => setShowAdminPanel(true)} title="Gestion Utilisateurs">
                   <UserCog size={15} />
                 </button>
               )}
+
               <button className="btn btn-secondary btn-sm" onClick={handleLogout} title="Se déconnecter">
                 <LogOut size={15} />
               </button>
@@ -351,8 +396,17 @@ function App() {
 
           <main className="main-content">
             <Routes>
-              <Route path="/" element={<ProjectsView projects={projects} t={t} setPassModal={setPassModal} currentUser={currentUser} financialData={financialData} onAdd={() => { setEditingProject(null); setModalOpen(true); }} onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} />} />
-              <Route path="/project/:id" element={<ProjectDetails projects={projects} t={t} setPassModal={setPassModal} currentUser={currentUser} onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} />} />
+              <Route path="/" element={<ProjectsView 
+                projects={currentUser.role !== 'employee' ? projects : projects.filter(p => currentUser.allowed_projects?.includes(p.id))}
+                t={t} setPassModal={setPassModal} currentUser={currentUser} financialData={financialData}
+                onAdd={() => { setEditingProject(null); setModalOpen(true); }}
+                onEdit={(p) => { setEditingProject(p); setModalOpen(true); }}
+              />} />
+              <Route path="/project/:id" element={<ProjectDetails
+                projects={currentUser.role !== 'employee' ? projects : projects.filter(p => currentUser.allowed_projects?.includes(p.id))} 
+                t={t} setPassModal={setPassModal} currentUser={currentUser} 
+                onEdit={(p) => { setEditingProject(p); setModalOpen(true); }} 
+              />} />
               <Route path="/dashboard" element={<Dashboard t={t} setPassModal={setPassModal} currentUser={currentUser} financialData={financialData} />} />
             </Routes>
           </main>
@@ -373,7 +427,7 @@ function App() {
               }}
             />
           )}
-          {showAdminPanel && <AdminPanel onClose={() => setShowAdminPanel(false)} />}
+          {showAdminPanel && <AdminPanel projects={projects} currentUser={currentUser} onClose={() => setShowAdminPanel(false)} />}
         </AnimatePresence>
       </div>
     </Router>
@@ -490,8 +544,8 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen, isCollapsed, setIsCollapsed,
       <div className={`sidebar-overlay ${isSidebarOpen ? 'show' : ''}`} onClick={() => setIsSidebarOpen(false)}></div>
       <aside className={`sidebar ${isSidebarOpen ? 'open' : ''} ${isCollapsed ? 'collapsed' : ''}`}>
         <div className="sidebar-logo">
-          <img src={logo} alt="Logo" style={{ height: '55px', width: 'auto', marginRight: !isCollapsed ? '8px' : '0' }} />
-          {!isCollapsed && <span>Baridcash Janati</span>}
+          <img src={logo} alt="OpsMaster" style={{ height: '55px', width: 'auto', marginRight: !isCollapsed ? '8px' : '0' }} />
+          {!isCollapsed && <span>OpsMaster</span>}
           <button className="collapse-toggle" onClick={() => setIsCollapsed(!isCollapsed)}>
             {isCollapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
           </button>
@@ -506,7 +560,7 @@ const Sidebar = ({ isSidebarOpen, setIsSidebarOpen, isCollapsed, setIsCollapsed,
             </button>
           ))}
         </nav>
-        {!isCollapsed && currentUser?.role === 'admin' && (
+        {!isCollapsed && currentUser?.role !== 'employee' && (
           <div className="sidebar-finance">
             <div className="sidebar-finance-title">Résumé Financier</div>
             <div className="sidebar-finance-row">
@@ -534,11 +588,14 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
   const { servicesTotal = 0, monthlyTotal = 0 } = financialData;
 
   useEffect(() => {
-    const unsubTasks = onSnapshot(collection(db, "global_tasks"), snap => {
-      setTasks(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    if (!currentUser) return;
+    const qTasks = collection(db, "global_tasks");
+    const unsubTasks = onSnapshot(qTasks, snap => {
+      setTasks(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => (b.createdAt?.toDate()||0) - (a.createdAt?.toDate()||0)));
     });
-    const unsubDemandes = onSnapshot(collection(db, "demandes"), snap => {
-      setDemandes(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    const qDemandes = collection(db, "demandes");
+    const unsubDemandes = onSnapshot(qDemandes, snap => {
+      setDemandes(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a,b) => (b.createdAt?.toDate()||0) - (a.createdAt?.toDate()||0)));
     });
     const unsubSettings = onSnapshot(doc(db, "settings", "global"), docSnap => {
       if(docSnap.exists()) setSettings(docSnap.data());
@@ -553,15 +610,15 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
 
   return (
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
+      {/* ── Section 1: Dashboard Statistics (always on top) ── */}
       <div className="page-header" style={{ marginBottom: '24px' }}>
         <div>
           <h2 className="page-title">{t.dashboard}</h2>
           <p className="page-subtitle">{t.manageWorkflows}</p>
         </div>
-        <button className="btn btn-primary" onClick={onAdd}><Plus size={18} /> {t.newProject}</button>
       </div>
 
-      <div className={`stats-grid ${currentUser?.role === 'admin' ? 'stats-grid-4' : 'stats-grid-2'}`} style={{ marginBottom: '32px' }}>
+      <div className={`stats-grid ${currentUser?.role !== 'employee' ? 'stats-grid-4' : 'stats-grid-2'}`} style={{ marginBottom: '32px' }}>
         {/* Card 1 — Tâches */}
         <div className="card stat-card" style={{ borderLeft: '4px solid #ef4444', cursor: 'pointer' }} onClick={() => setShowTasksModal(true)}>
           <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -585,7 +642,7 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
         </div>
 
         {/* Card 3 — Revenu du Jour (admin only) */}
-        {currentUser?.role === 'admin' && (
+        {currentUser?.role !== 'employee' && (
           <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
             <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span>Revenu du Jour</span>
@@ -600,7 +657,7 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
         )}
 
         {/* Card 4 — Revenu du Mois (admin only) */}
-        {currentUser?.role === 'admin' && (
+        {currentUser?.role !== 'employee' && (
           <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
             <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span>Revenu du Mois</span>
@@ -615,6 +672,20 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
         )}
       </div>
 
+      {/* ── Section 2: Project Management (below dashboard) ── */}
+      <div className="section-divider">
+        <div className="section-divider-line" />
+        <span className="section-divider-label">{t.projects}</span>
+        <div className="section-divider-line" />
+      </div>
+
+      <div className="page-header" style={{ marginBottom: '20px', marginTop: '8px' }}>
+        <div>
+          <h2 className="page-title" style={{ fontSize: '18px' }}>{t.projects}</h2>
+        </div>
+        <button className="btn btn-primary" onClick={onAdd}><Plus size={18} /> {t.newProject}</button>
+      </div>
+
       <div className="project-grid">
         {projects.length === 0 ? (
           <div className="card" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '60px 20px' }}>
@@ -624,7 +695,7 @@ function ProjectsView({ projects, t, onAdd, onEdit, setPassModal, currentUser, f
             <button className="btn btn-primary" onClick={onAdd}><Plus size={18} /> {t.newProject}</button>
           </div>
         ) : projects.map(project => (
-          <ProjectCard key={project.id} project={project} t={t} onEdit={() => onEdit(project)} setPassModal={setPassModal} />
+          <ProjectCard key={project.id} project={project} t={t} onEdit={() => onEdit(project)} setPassModal={setPassModal} currentUser={currentUser} />
         ))}
       </div>
 
@@ -691,7 +762,7 @@ function DemandesModal({ demandes, onClose, t, setPassModal, currentUser }) {
 function TasksModal({ tasks, onClose, t, setPassModal, currentUser }) {
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const handleAddTask = async () => {
-    if(!newTaskTitle) return;
+    if(!newTaskTitle.trim()) return;
     await addDoc(collection(db, "global_tasks"), { title: newTaskTitle, completed: false, createdAt: serverTimestamp() });
     setNewTaskTitle('');
   };
@@ -714,7 +785,7 @@ function TasksModal({ tasks, onClose, t, setPassModal, currentUser }) {
                   </div>
                   <span className={task.completed ? 'completed' : ''}>{task.title}</span>
                 </div>
-                {currentUser?.role === 'admin' && (
+                {currentUser?.role !== 'employee' && (
                   <button className="btn-icon-danger" onClick={() => {
                     setPassModal({ 
                       show: true, 
@@ -725,7 +796,7 @@ function TasksModal({ tasks, onClose, t, setPassModal, currentUser }) {
               </div>
             ))}
           </div>
-          {currentUser?.role === 'admin' && (
+          {currentUser?.role !== 'employee' && (
             <div className="task-input-box" style={{ marginTop: '20px' }}>
               <input className="input-field" placeholder="Ajouter une tâche..." value={newTaskTitle} onChange={e => setNewTaskTitle(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleAddTask()} />
               <button className="btn btn-primary" onClick={handleAddTask}><Plus size={18} /></button>
@@ -737,16 +808,18 @@ function TasksModal({ tasks, onClose, t, setPassModal, currentUser }) {
   );
 }
 
-function ProjectCard({ project, t, onEdit, setPassModal }) {
+function ProjectCard({ project, t, onEdit, setPassModal, currentUser }) {
   const nav = useNavigate();
   const [tasks, setTasks] = useState([]);
 
   useEffect(() => {
-    const unsub = onSnapshot(query(collection(db, "tasks"), where("project_id", "==", project.id)), (snap) => {
+    if (!currentUser) return;
+    const qTasks = query(collection(db, "tasks"), where("project_id", "==", project.id));
+    const unsub = onSnapshot(qTasks, (snap) => {
       setTasks(snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).slice(0, 3));
     });
     return () => unsub();
-  }, [project.id]);
+  }, [project.id, currentUser]);
 
   const handleDelete = async (e) => {
     e.stopPropagation();
@@ -826,13 +899,20 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
   const [operations, setOperations] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [activeTab, setActiveTab] = useState('ops');
-  const [newOp, setNewOp] = useState({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGE', type: opTypes[0], matricule: '', client: false, client_name: '', missing: '', amount_ht: '', tva: '' });
+  const [newOp, setNewOp] = useState({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGE', type: getDetailOptions('CGE')[0], matricule: '', cin: '', missing: '', amount_ht: '', tva: '' });
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [editingMissing, setEditingMissing] = useState(null);
 
+  // Advanced Filtering & Archiving
+  const [filterDate, setFilterDate] = useState('');
+  const [searchMatricule, setSearchMatricule] = useState('');
+  const [searchCIN, setSearchCIN] = useState('');
+  const [selectedMonth, setSelectedMonth] = useState(format(new Date(), 'yyyy-MM'));
+
   useEffect(() => {
-    if (!id) return;
-    const unsubOps = onSnapshot(query(collection(db, "operations"), where("project_id", "==", id)), (snap) => {
+    if (!id || !currentUser) return;
+    const qOps = query(collection(db, "operations"), where("project_id", "==", id));
+    const unsubOps = onSnapshot(qOps, (snap) => {
       setOperations(snap.docs.map(doc => ({ 
         id: doc.id, ...doc.data(), 
         date_str: doc.data().date?.toDate().toISOString().split('T')[0],
@@ -840,7 +920,8 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
       })).sort((a, b) => b.date_obj - a.date_obj));
     });
     let lastProgress = null;
-    const unsubTasks = onSnapshot(query(collection(db, "tasks"), where("project_id", "==", id)), (snap) => {
+    const qTasks = query(collection(db, "tasks"), where("project_id", "==", id));
+    const unsubTasks = onSnapshot(qTasks, (snap) => {
       const taskList = snap.docs.map(doc => ({ id: doc.id, ...doc.data(), createdAt: doc.data().createdAt?.toDate() || new Date() })).sort((a, b) => a.createdAt - b.createdAt);
       setTasks(taskList);
       const p = taskList.length > 0 ? Math.round((taskList.filter(tk => tk.completed).length / taskList.length) * 100) : 0;
@@ -850,7 +931,7 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
       }
     });
     return () => { unsubOps(); unsubTasks(); };
-  }, [id]);
+  }, [id, currentUser]);
 
   if (!project) return <div className="loading-screen">{t.loading}</div>;
 
@@ -864,10 +945,12 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
     }
     try {
       await addDoc(collection(db, "operations"), {
-        ...newOp, project_id: id, date: Timestamp.fromDate(new Date(newOp.date)),
-        amount_ht: ht, tva: frais, client_name: newOp.client_name || '', created_by: currentUser?.name || 'Staff'
+        ...newOp,
+        project_id: id,
+        date: Timestamp.fromDate(new Date(newOp.date)),
+        amount_ht: ht, tva: frais, cin: newOp.cin || '', created_by: currentUser?.name || 'Staff'
       });
-      setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGE', type: opTypes[0], matricule: '', client: false, client_name: '', missing: '', amount_ht: '', tva: '' });
+      setNewOp({ date: format(new Date(), 'yyyy-MM-dd'), source: 'CGE', type: getDetailOptions('CGE')[0], matricule: '', cin: '', missing: '', amount_ht: '', tva: '' });
     } catch (err) { console.error(err); alert('Erreur: ' + err.message); }
   };
 
@@ -875,6 +958,56 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
     if (!editingMissing) return;
     await updateDoc(doc(db, "operations", editingMissing.id), { missing: editingMissing.text });
     setEditingMissing(null);
+  };
+
+  // Monthly Archiving & Filtering
+  const availableMonths = [...new Set(operations.map(op => op.date_str.substring(0, 7)))].sort().reverse();
+  const currentMonthStr = format(new Date(), 'yyyy-MM');
+  if (!availableMonths.includes(currentMonthStr)) availableMonths.unshift(currentMonthStr);
+
+  const filteredOperations = operations.filter(op => {
+    if (op.date_str.substring(0, 7) !== selectedMonth) return false;
+    if (filterDate && op.date_str !== filterDate) return false;
+    if (searchMatricule && !(op.matricule || '').toLowerCase().includes(searchMatricule.toLowerCase())) return false;
+    if (searchCIN && !(op.cin || '').toLowerCase().includes(searchCIN.toLowerCase())) return false;
+    return true;
+  });
+
+  const generatePDF = () => {
+    const doc = new jsPDF();
+    doc.setFontSize(22);
+    doc.setTextColor(227, 114, 34);
+    doc.text('OpsMaster', 14, 22);
+    doc.setFontSize(14);
+    doc.setTextColor(40, 40, 40);
+    doc.text(`Rapport des Opérations - ${selectedMonth}`, 14, 32);
+    if (filterDate) doc.text(`Date filtrée: ${filterDate}`, 14, 40);
+
+    const tableColumn = ["Date", "Source", "Type", "Matricule", "CIN", "HT", "TVA", "TTC"];
+    const tableRows = [];
+    let totalHT = 0; let totalTVA = 0;
+
+    filteredOperations.forEach(op => {
+      const ht = Number(op.amount_ht || 0);
+      const tva = Number(op.tva || 0);
+      totalHT += ht; totalTVA += tva;
+      tableRows.push([
+        op.date_str, op.source, op.type, op.matricule || '--', op.cin || '--',
+        ht.toFixed(2), tva.toFixed(2), (ht + tva).toFixed(2)
+      ]);
+    });
+    tableRows.push(["", "", "", "", "TOTAL", totalHT.toFixed(2), totalTVA.toFixed(2), (totalHT + totalTVA).toFixed(2)]);
+
+    autoTable(doc, {
+      head: [tableColumn],
+      body: tableRows,
+      startY: filterDate ? 45 : 38,
+      theme: 'grid',
+      headStyles: { fillColor: [227, 114, 34] },
+      styles: { fontSize: 8 },
+      footStyles: { fillColor: [40, 40, 40], textColor: [255, 255, 255], fontStyle: 'bold' }
+    });
+    doc.save(`Rapport_${selectedMonth}.pdf`);
   };
 
   return (
@@ -900,13 +1033,8 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
                   <label className="label">{t.source}</label>
                   <select className="input-field" value={newOp.source} onChange={e => {
                     const val = e.target.value;
-                    let nextType = newOp.type;
-                    if (val === 'Delivery') {
-                      nextType = 'Autre ville';
-                    } else if (newOp.source === 'Delivery') {
-                      nextType = opTypes[0];
-                    }
-                    setNewOp({...newOp, source: val, type: nextType});
+                    const details = getDetailOptions(val);
+                    setNewOp({...newOp, source: val, type: details[0]});
                   }}>
                     <option>CGE</option><option>PCE</option><option>La Caisse</option><option>Infraction</option><option>Delivery</option>
                   </select>
@@ -914,14 +1042,7 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
                 <div className="form-group-sm">
                   <label className="label">{t.type}</label>
                   <select className="input-field" value={newOp.type} onChange={e => setNewOp({...newOp, type: e.target.value})}>
-                    {newOp.source === 'Delivery' ? (
-                      <>
-                        <option>Sur fes</option>
-                        <option>Autre ville</option>
-                      </>
-                    ) : (
-                      opTypes.map(o => <option key={o}>{o}</option>)
-                    )}
+                    {getDetailOptions(newOp.source).map(o => <option key={o}>{o}</option>)}
                   </select>
                 </div>
                 <div className="form-group-sm">
@@ -929,8 +1050,8 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
                   <input type="text" className="input-field" value={newOp.matricule} onChange={e => setNewOp({...newOp, matricule: e.target.value})} placeholder={t.matricule} />
                 </div>
                 <div className="form-group-sm">
-                  <label className="label">{t.clientName}</label>
-                  <input type="text" className="input-field" value={newOp.client_name} onChange={e => setNewOp({...newOp, client_name: e.target.value})} placeholder={t.clientName} />
+                  <label className="label">{t.cin}</label>
+                  <input type="text" className="input-field" value={newOp.cin} onChange={e => setNewOp({...newOp, cin: e.target.value})} placeholder={t.cin} />
                 </div>
                 <div className="form-group-sm">
                   <label className="label">{t.ht}</label>
@@ -940,79 +1061,139 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
                   <label className="label">{t.tva}</label>
                   <input type="number" className="input-field" value={newOp.tva} onChange={e => setNewOp({...newOp, tva: e.target.value})} onFocus={e => e.target.select()} placeholder="0" min="0" />
                 </div>
-                <div className="form-group-sm">
+                <div className="form-group-sm" style={{ gridColumn: 'span 2' }}>
                   <label className="label">{t.missing}</label>
                   <input className="input-field" value={newOp.missing} onChange={e => setNewOp({...newOp, missing: e.target.value})} placeholder={t.missing} />
                 </div>
-                <div className="op-ttc-btn">
-                    <label className="client-check-label">
-                      <input type="checkbox" checked={newOp.client} onChange={e => setNewOp({...newOp, client: e.target.checked})} />
-                      {t.client}
-                    </label>
+                <div className="op-ttc-btn" style={{ gridColumn: 'span 2' }}>
                     <span className="ttc-preview">{(Number(newOp.amount_ht || 0) + Number(newOp.tva || 0)).toLocaleString()} DH</span>
                     <button className="btn btn-primary op-add-btn" onClick={handleAddOp}><Plus size={16} /> Ajouter</button>
                 </div>
               </div>
             </div>
 
-            {/* ── Table lecture seule ── */}
-            <div className="card table-card">
-              <div className="table-container scrollable">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>{t.date}</th>
-                      <th>{t.source}</th>
-                      <th>{t.type}</th>
-                      <th>{t.matricule}</th>
-                      <th>{t.clientName}</th>
-                      <th>{t.client}</th>
-                      <th>{t.missing}</th>
-                      {currentUser?.role === 'admin' && (
-                        <>
-                          <th>Créé par</th>
-                          <th>{t.ht}</th>
-                          <th>{t.tva}</th>
-                          <th>{t.ttc}</th>
-                        </>
-                      )}
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {operations.map(op => (
-                      <tr key={op.id}>
-                        <td className="td-date">{op.date_str}</td>
-                        <td className="td-source">{op.source}</td>
-                        <td><span className="badge badge-low">{op.type}</span></td>
-                        <td className="td-center">{op.matricule || '--'}</td>
-                        <td className="td-center">{op.client_name || '--'}</td>
-                        <td className="td-center">{op.client ? <Check size={16} color="#10b981" /> : <X size={16} color="#ef4444" />}</td>
-                        <td className="td-missing">
-                          <div className="missing-box">
-                            <span>{op.missing || '--'}</span>
-                            <button onClick={() => setEditingMissing({ id: op.id, text: op.missing || '' })} className="btn-icon-xs"><Edit2 size={11} /></button>
-                          </div>
-                        </td>
-                        {currentUser?.role === 'admin' && (
-                          <>
-                            <td className="td-center"><span className="badge badge-role-employee" style={{ fontSize: '10px' }}>{op.created_by || '--'}</span></td>
-                            <td className="td-amount">{Number(op.amount_ht || 0).toLocaleString()}</td>
-                            <td className="td-amount">{Number(op.tva || 0).toLocaleString()}</td>
-                            <td className="td-ttc">{(Number(op.amount_ht || 0) + Number(op.tva || 0)).toLocaleString()}</td>
-                          </>
-                        )}
-                        <td><button className="btn-icon-danger" onClick={() => {
-                          setPassModal({
-                            show: true,
-                            onConfirm: () => deleteDoc(doc(db, "operations", op.id))
-                          });
-                        }}><Trash2 size={14} /></button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+            {/* ── Advanced Search & Filtering ── */}
+            <div className="card" style={{ marginBottom: '16px', padding: '16px' }}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '12px', alignItems: 'flex-end', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', flex: 1 }}>
+                  <div className="form-group-sm">
+                    <label className="label">Filtrer par Jour</label>
+                    <input type="date" className="input-field" value={filterDate} onChange={e => setFilterDate(e.target.value)} />
+                  </div>
+                  <div className="form-group-sm">
+                    <label className="label">Rechercher {t.matricule}</label>
+                    <input type="text" className="input-field" placeholder="Ex: 12345..." value={searchMatricule} onChange={e => setSearchMatricule(e.target.value)} />
+                  </div>
+                  <div className="form-group-sm">
+                    <label className="label">Rechercher {t.cin || 'CIN'}</label>
+                    <input type="text" className="input-field" placeholder="Ex: AB123..." value={searchCIN} onChange={e => setSearchCIN(e.target.value)} />
+                  </div>
+                  {(filterDate || searchMatricule || searchCIN) && (
+                    <button className="btn btn-secondary" style={{ marginBottom: '2px' }} onClick={() => { setFilterDate(''); setSearchMatricule(''); setSearchCIN(''); }}>
+                      Effacer
+                    </button>
+                  )}
+                </div>
+                
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-end' }}>
+                  <div className="form-group-sm">
+                    <label className="label">Mois pour PDF</label>
+                    <select className="input-field" value={selectedMonth} onChange={e => setSelectedMonth(e.target.value)}>
+                      {availableMonths.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                  </div>
+                  <button className="btn btn-primary" onClick={generatePDF} style={{ background: '#e37222', marginBottom: '2px' }}>
+                    <FileText size={16} /> {t.downloadPdf || 'PDF'}
+                  </button>
+                </div>
               </div>
+            </div>
+
+            {/* ── Annual Archiving (Vertical Stack) ── */}
+            <div className="archiving-container" style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
+              {availableMonths.map(month => {
+                const monthOps = operations.filter(op => {
+                  if (op.date_str.substring(0, 7) !== month) return false;
+                  if (filterDate && op.date_str !== filterDate) return false;
+                  if (searchMatricule && !(op.matricule || '').toLowerCase().includes(searchMatricule.toLowerCase())) return false;
+                  if (searchCIN && !(op.cin || '').toLowerCase().includes(searchCIN.toLowerCase())) return false;
+                  return true;
+                });
+
+                if (monthOps.length === 0) return null;
+
+                return (
+                  <div key={month} className="month-section">
+                    <div className="month-header-sticky" style={{ 
+                      position: 'sticky', top: '0', background: 'var(--bg-primary)', zIndex: 20,
+                      padding: '12px 0', borderBottom: '2px solid var(--accent-color)', marginBottom: '12px',
+                      display: 'flex', justifyContent: 'space-between', alignItems: 'center'
+                    }}>
+                      <h3 style={{ fontSize: '18px', fontWeight: '800', color: 'var(--accent-color)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <Calendar size={20} /> {month}
+                      </h3>
+                      <span className="badge badge-low">{monthOps.length} Opérations</span>
+                    </div>
+
+                    <div className="card table-card" style={{ marginBottom: '0' }}>
+                      <div className="table-container scrollable">
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>{t.date}</th>
+                              <th>{t.source}</th>
+                              <th>{t.type}</th>
+                              <th>{t.matricule}</th>
+                              <th>{t.cin || 'CIN'}</th>
+                              <th>{t.missing}</th>
+                              {currentUser?.role !== 'employee' && (
+                                <>
+                                  <th>Créé par</th>
+                                  <th>{t.ht}</th>
+                                  <th>{t.tva}</th>
+                                  <th>{t.ttc}</th>
+                                </>
+                              )}
+                              <th></th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {monthOps.map(op => (
+                              <tr key={op.id}>
+                                <td className="td-date">{op.date_str}</td>
+                                <td className="td-source">{op.source}</td>
+                                <td><span className="badge badge-low">{op.type}</span></td>
+                                <td className="td-center">{op.matricule || '--'}</td>
+                                <td className="td-center">{op.cin || '--'}</td>
+                                <td className="td-missing">
+                                  <div className="missing-box">
+                                    <span>{op.missing || '--'}</span>
+                                    <button onClick={() => setEditingMissing({ id: op.id, text: op.missing || '' })} className="btn-icon-xs"><Edit2 size={11} /></button>
+                                  </div>
+                                </td>
+                                {currentUser?.role !== 'employee' && (
+                                  <>
+                                    <td className="td-center"><span className="badge badge-role-employee" style={{ fontSize: '10px' }}>{op.created_by || '--'}</span></td>
+                                    <td className="td-amount">{Number(op.amount_ht || 0).toLocaleString()}</td>
+                                    <td className="td-amount">{Number(op.tva || 0).toLocaleString()}</td>
+                                    <td className="td-ttc">{(Number(op.amount_ht || 0) + Number(op.tva || 0)).toLocaleString()}</td>
+                                  </>
+                                )}
+                                <td><button className="btn-icon-danger" onClick={() => {
+                                  setPassModal({
+                                    show: true,
+                                    onConfirm: () => deleteDoc(doc(db, "operations", op.id))
+                                  });
+                                }}><Trash2 size={14} /></button></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </>
       </div>
@@ -1035,18 +1216,19 @@ function ProjectDetails({ projects, t, onEdit, setPassModal, currentUser }) {
   );
 }
 
-function AdminPanel({ onClose }) {
+function AdminPanel({ projects, onClose, currentUser }) {
   const [users, setUsers] = useState([]);
-  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'employee' });
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'employee', allowed_projects: [] });
   const [editPass, setEditPass] = useState(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, 'users'), snap => {
+    const qUsers = collection(db, 'users');
+    const unsub = onSnapshot(qUsers, snap => {
       setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     return () => unsub();
-  }, []);
+  }, [currentUser]);
 
   const withSecondaryApp = async (fn) => {
     const key = 'sec_' + Date.now();
@@ -1066,15 +1248,18 @@ function AdminPanel({ onClose }) {
         const cred = await createUserWithEmailAndPassword(secAuth, email, newUser.password);
         await setDoc(doc(db, 'users', cred.user.uid), {
           name: newUser.name.trim(), email, role: newUser.role,
-          password: newUser.password, createdAt: serverTimestamp()
+          password: newUser.password, 
+          allowed_projects: newUser.allowed_projects || [],
+          createdAt: serverTimestamp()
         });
       });
-      setNewUser({ name: '', email: '', password: '', role: 'employee' });
+      setNewUser({ name: '', email: '', password: '', role: 'employee', allowed_projects: [] });
     } catch (err) { alert('Erreur: ' + err.message); }
     finally { setBusy(false); }
   };
 
   const handleDelete = async (user) => {
+    if (!window.confirm(`Supprimer l'utilisateur ${user.name} ?`)) return;
     setBusy(true);
     try {
       await withSecondaryApp(async (secAuth) => {
@@ -1100,39 +1285,114 @@ function AdminPanel({ onClose }) {
     finally { setBusy(false); }
   };
 
+  const toggleProject = async (user, projectId) => {
+    const current = user.allowed_projects || [];
+    const updated = current.includes(projectId) 
+      ? current.filter(id => id !== projectId)
+      : [...current, projectId];
+    
+    try {
+      await updateDoc(doc(db, 'users', user.id), { allowed_projects: updated });
+    } catch (err) { console.error(err); }
+  };
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <motion.div initial={{ y: 20, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 20, opacity: 0 }}
-        className="card modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '520px', width: '100%' }}>
+        className="card modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '700px', width: '95%' }}>
         <div className="modal-header">
           <h3>Gestion des Utilisateurs</h3>
           <button onClick={onClose} className="btn-icon-sm"><X size={18} /></button>
         </div>
-        <div className="modal-body">
-          <div className="admin-add-user">
-            <input className="input-field" placeholder="Nom affiché" value={newUser.name}
-              onChange={e => setNewUser({ ...newUser, name: e.target.value })} disabled={busy} />
-            <input type="email" className="input-field" placeholder="Email (optionnel)" value={newUser.email}
-              onChange={e => setNewUser({ ...newUser, email: e.target.value })} disabled={busy} />
-            <input type="password" className="input-field" placeholder="Mot de passe (6+ car.)" value={newUser.password}
-              onChange={e => setNewUser({ ...newUser, password: e.target.value })}
-              onKeyDown={e => e.key === 'Enter' && handleAdd()} disabled={busy} />
-            <select className="input-field" value={newUser.role}
-              onChange={e => setNewUser({ ...newUser, role: e.target.value })} disabled={busy}>
-              <option value="employee">Employé</option>
-              <option value="admin">Admin</option>
-            </select>
-            <button className="btn btn-primary" onClick={handleAdd} disabled={busy}>
-              {busy ? '...' : <><Plus size={15} /> Ajouter</>}
+        <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+          <div className="admin-add-user" style={{ background: 'var(--bg-secondary)', padding: '16px', borderRadius: '12px', marginBottom: '24px' }}>
+            <h4 style={{ marginBottom: '12px', fontSize: '14px' }}>Ajouter un nouvel utilisateur</h4>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '10px' }}>
+              <input className="input-field" placeholder="Nom affiché" value={newUser.name}
+                onChange={e => setNewUser({ ...newUser, name: e.target.value })} disabled={busy} />
+              <input type="email" className="input-field" placeholder="Email (optionnel)" value={newUser.email}
+                onChange={e => setNewUser({ ...newUser, email: e.target.value })} disabled={busy} />
+              <input type="password" className="input-field" placeholder="Mot de passe" value={newUser.password}
+                onChange={e => setNewUser({ ...newUser, password: e.target.value })} disabled={busy} />
+              <select className="input-field" value={newUser.role}
+                onChange={e => setNewUser({ ...newUser, role: e.target.value })} disabled={busy}>
+                <option value="employee">Employé</option>
+                <option value="admin">Admin</option>
+              </select>
+            </div>
+            
+            {newUser.role === 'employee' && (
+              <div style={{ marginBottom: '15px' }}>
+                <label className="label" style={{ fontSize: '12px' }}>Projets Autorisés :</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '5px' }}>
+                  {projects.map(p => (
+                    <button 
+                      key={p.id}
+                      onClick={() => {
+                        const current = newUser.allowed_projects || [];
+                        const updated = current.includes(p.id) ? current.filter(id => id !== p.id) : [...current, p.id];
+                        setNewUser({...newUser, allowed_projects: updated});
+                      }}
+                      className={`badge ${newUser.allowed_projects?.includes(p.id) ? 'badge-high' : 'badge-low'}`}
+                      style={{ cursor: 'pointer', border: 'none', padding: '4px 10px' }}
+                    >
+                      {p.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <button className="btn btn-primary w-full" onClick={handleAdd} disabled={busy}>
+              {busy ? '...' : <><Plus size={15} /> Créer le compte</>}
             </button>
           </div>
 
           <div className="user-list">
+            <h4 style={{ marginBottom: '12px', fontSize: '14px' }}>Liste des comptes</h4>
             {users.map(user => (
-              <div key={user.id} className="user-row">
-                {editPass?.id === user.id ? (
-                  <div className="user-edit-pass">
-                    <span className="user-name">{user.name}</span>
+              <div key={user.id} className="user-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: '12px', padding: '16px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div className="user-info">
+                    <span className="user-name" style={{ fontSize: '15px', fontWeight: '700' }}>{user.name}</span>
+                    <span className={`badge badge-role-${user.role}`}>{user.role !== 'employee' ? 'Admin' : 'Employé'}</span>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', marginLeft: '8px' }}>{user.email}</span>
+                  </div>
+                  <div className="user-actions">
+                    <button className="btn btn-secondary btn-sm" disabled={busy}
+                      onClick={() => setEditPass({ id: user.id, email: user.email, password: user.password, newPassword: '' })}>
+                      <Edit2 size={13} /> MDP
+                    </button>
+                    <button className="btn-icon-danger" disabled={busy}
+                      onClick={() => handleDelete(user)}><Trash2 size={14} /></button>
+                  </div>
+                </div>
+
+                {user.role === 'employee' && (
+                  <div style={{ borderTop: '1px border var(--border-color)', paddingTop: '10px' }}>
+                    <span style={{ fontSize: '12px', fontWeight: '600', display: 'block', marginBottom: '8px', color: 'var(--text-secondary)' }}>
+                      Accès aux projets :
+                    </span>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                      {projects.map(p => (
+                        <button 
+                          key={p.id}
+                          onClick={() => toggleProject(user, p.id)}
+                          className={`badge ${user.allowed_projects?.includes(p.id) ? 'badge-high' : 'badge-low'}`}
+                          style={{ cursor: 'pointer', border: 'none', padding: '3px 8px', fontSize: '11px' }}
+                        >
+                          {p.name}
+                        </button>
+                      ))}
+                      {(!user.allowed_projects || user.allowed_projects.length === 0) && 
+                        <span style={{ fontSize: '11px', color: 'var(--danger)', fontStyle: 'italic' }}>Aucun projet assigné</span>
+                      }
+                    </div>
+                  </div>
+                )}
+
+                {editPass?.id === user.id && (
+                  <div className="user-edit-pass" style={{ marginTop: '10px', background: 'var(--bg-secondary)', padding: '10px', borderRadius: '8px' }}>
                     <input type="password" className="input-field" placeholder="Nouveau mot de passe"
                       value={editPass.newPassword} autoFocus disabled={busy}
                       onChange={e => setEditPass({ ...editPass, newPassword: e.target.value })}
@@ -1140,21 +1400,6 @@ function AdminPanel({ onClose }) {
                     <button className="btn btn-primary btn-sm" onClick={handleSavePassword} disabled={busy}><Check size={14} /></button>
                     <button className="btn btn-secondary btn-sm" onClick={() => setEditPass(null)} disabled={busy}><X size={14} /></button>
                   </div>
-                ) : (
-                  <>
-                    <div className="user-info">
-                      <span className="user-name">{user.name}</span>
-                      <span className={`badge badge-role-${user.role}`}>{user.role === 'admin' ? 'Admin' : 'Employé'}</span>
-                    </div>
-                    <div className="user-actions">
-                      <button className="btn btn-secondary btn-sm" disabled={busy}
-                        onClick={() => setEditPass({ id: user.id, email: user.email, password: user.password, newPassword: '' })}>
-                        <Edit2 size={13} /> MDP
-                      </button>
-                      <button className="btn-icon-danger" disabled={busy}
-                        onClick={() => handleDelete(user)}><Trash2 size={14} /></button>
-                    </div>
-                  </>
                 )}
               </div>
             ))}

@@ -112,12 +112,12 @@ export default function Dashboard({ t, setPassModal, currentUser, financialData 
     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
       <div className="page-header">
         <h2 className="page-title">{t.dashboard}</h2>
-        {currentUser?.role === 'admin' && (
+        {currentUser?.role !== 'employee' && (
           <button className="btn btn-secondary" onClick={() => setShowSettings(true)}><Settings size={18} /> Paramètres</button>
         )}
       </div>
 
-      <div className={`stats-grid ${currentUser?.role === 'admin' ? 'stats-grid-4' : 'stats-grid-2'}`}>
+      <div className={`stats-grid ${currentUser?.role !== 'employee' ? 'stats-grid-4' : 'stats-grid-2'}`}>
         {/* Card 1: Tâches */}
         <div className="card stat-card" style={{ borderLeft: '4px solid #ef4444', cursor: 'pointer' }} onClick={() => setShowTasksModal(true)}>
           <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
@@ -141,7 +141,7 @@ export default function Dashboard({ t, setPassModal, currentUser, financialData 
         </div>
 
         {/* Card 3: Revenu du Jour (admin only) */}
-        {currentUser?.role === 'admin' && (
+        {currentUser?.role !== 'employee' && (
           <div className="card stat-card" style={{ borderLeft: '4px solid #10b981' }}>
             <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span>Revenu du Jour</span>
@@ -156,7 +156,7 @@ export default function Dashboard({ t, setPassModal, currentUser, financialData 
         )}
 
         {/* Card 4: Revenu du Mois (admin only) */}
-        {currentUser?.role === 'admin' && (
+        {currentUser?.role !== 'employee' && (
           <div className="card stat-card" style={{ borderLeft: '4px solid var(--accent-color)' }}>
             <div className="stat-label" style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span>Revenu du Mois</span>

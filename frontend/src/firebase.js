@@ -3,13 +3,13 @@ import { getFirestore } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 export const firebaseConfig = {
-  projectId: "project-management-98bdc",
-  appId: "1:109160710729:web:f514c4ca1edf3f8537f598",
-  storageBucket: "project-management-98bdc.firebasestorage.app",
-  apiKey: "AIzaSyA7vb7cR_8Qh0sJhXnT2jADitw5qbmCMQs",
-  authDomain: "project-management-98bdc.firebaseapp.com",
-  messagingSenderId: "109160710729",
-  measurementId: "G-MYCTPKHBQF"
+  projectId: "janati-flow-v1112233",
+  appId: "1:263040292540:web:bdd9a5134a2435313522b9",
+  storageBucket: "janati-flow-v1112233.firebasestorage.app",
+  apiKey: "AIzaSyB3OtFp_4skxTWWcs_qEANnICr1bUiGQE0",
+  authDomain: "janati-flow-v1112233.firebaseapp.com",
+  messagingSenderId: "263040292540",
+  measurementId: "G-MYCTPKHBQF" // This may vary but usually it's fine
 };
 
 const app = initializeApp(firebaseConfig);

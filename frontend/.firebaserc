@@ -1,5 +1,9 @@
 {
   "projects": {
-    "default": "project-management-98bdc"
-  }
+    "default": "project-management-98bdc",
+    "production": "janati-flow-v1112233"
+  },
+  "targets": {},
+  "etags": {},
+  "dataconnectEmulatorConfig": {}
 }

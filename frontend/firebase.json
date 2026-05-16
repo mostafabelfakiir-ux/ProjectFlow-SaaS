@@ -1,6 +1,6 @@
 {
   "hosting": {
-    "site": "project-management-98bdc",
+    "site": "janati-flow-v1112233",
     "public": "dist",
     "ignore": [
       "firebase.json",
@@ -15,6 +15,14 @@
     ]
   },
   "firestore": {
-    "rules": "firestore.rules"
+    "database": "(default)",
+    "location": "us-central1",
+    "rules": "firestore.rules",
+    "indexes": "firestore.indexes.json"
+  },
+  "auth": {
+    "providers": {
+      "emailPassword": true
+    }
   }
 }

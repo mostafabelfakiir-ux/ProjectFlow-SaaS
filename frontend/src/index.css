@@ -4,10 +4,10 @@
    CSS Variables - Clean & Minimal
    =========================== */
 :root {
-  --accent: #e37222;
+  --accent: #ff6b00;
   --accent-color: var(--accent);
-  --accent-hover: #c55d16;
-  --accent-light: #fff3e0;
+  --accent-hover: #e66000;
+  --accent-light: rgba(255, 107, 0, 0.08);
   --bg-main: #f7f8fa;
   --bg-card: #ffffff;
   --bg-input: #f9fafb;
@@ -579,20 +579,22 @@ select.input-sm {
 /* ===========================
    Tables - Clean
    =========================== */
-.table-card { padding: 0; overflow: hidden; }
-.table-container { overflow-x: auto; max-width: 100%; }
+.table-card { padding: 0; overflow: hidden; border-radius: var(--radius); }
+.table-container { overflow: auto; max-width: 100%; max-height: 70vh; }
 .table-container.scrollable { -webkit-overflow-scrolling: touch; }
-.table-container::-webkit-scrollbar { height: 5px; }
+.table-container::-webkit-scrollbar { height: 5px; width: 5px; }
 .table-container::-webkit-scrollbar-track { background: var(--bg-main); }
 .table-container::-webkit-scrollbar-thumb { background: var(--border); border-radius: 10px; }
 
-table { width: 100%; border-collapse: collapse; min-width: 720px; }
+table { width: 100%; border-collapse: separate; border-spacing: 0; min-width: 720px; }
 th {
   background: var(--bg-main); padding: 11px 14px;
   text-align: left; font-size: 11px;
   text-transform: uppercase; letter-spacing: 0.06em;
   font-weight: 700; color: var(--text-muted);
   border-bottom: 2px solid var(--border); white-space: nowrap;
+  position: sticky; top: 0; z-index: 5;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.06);
 }
 td {
   padding: 11px 14px;
@@ -654,6 +656,33 @@ tr:hover { background: var(--bg-hover); }
 }
 .stat-value { font-size: 28px; font-weight: 800; color: var(--text-primary); line-height: 1; }
 .currency { font-size: 14px; color: var(--text-muted); font-weight: 600; margin-left: 4px; }
+
+/* ===========================
+   Section Divider
+   =========================== */
+.section-divider {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin: 8px 0 16px;
+}
+.section-divider-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+}
+.section-divider-label {
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--text-muted);
+  white-space: nowrap;
+  padding: 4px 14px;
+  background: var(--bg-main);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+}
 
 /* ===========================
    Tasks
@@ -750,7 +779,7 @@ span.completed { text-decoration: line-through; color: var(--text-muted); }
   .header-logo { display: block !important; }
   .header-title { display: block; }
   .main-header { padding: 0 16px; height: 52px; }
-  .user-name-badge { display: none; }
+
   .header-divider { display: none; }
   .lang-toggle { display: none; }
   .main-content { padding: 16px; }

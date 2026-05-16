@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { auth, db } from './firebase';
 import { signInWithEmailAndPassword, createUserWithEmailAndPassword, sendPasswordResetEmail } from 'firebase/auth';
 import { collection, getDocs, query, where, doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import logo from './assets/logo-barid.png';
+import logo from './assets/logo-opsmaster.png';
 
 export const nameToEmail = (name) =>
   `${name.trim().toLowerCase().replace(/\s+/g, '_')}@pf.app`;
@@ -30,7 +30,7 @@ export default function LoginPage() {
     if (!identifier.trim() || !password) { setError('Remplissez tous les champs'); return; }
     setLoading(true);
     setError('');
-    const email = nameToEmail(identifier);
+    const email = toFirebaseEmail(identifier);
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
@@ -91,12 +91,14 @@ export default function LoginPage() {
           }
 
           setError('Identifiant ou mot de passe incorrect');
-        } catch {
-          setError('Erreur de connexion. Réessayez.');
+        } catch (err) {
+          console.error(err);
+          setError('Erreur de connexion ou de configuration.');
         }
       } else {
         setError('Erreur de connexion. Réessayez.');
       }
+    } finally {
       setLoading(false);
     }
   };
@@ -164,7 +166,7 @@ export default function LoginPage() {
       <motion.div initial={{ y: 24, opacity: 0 }} animate={{ y: 0, opacity: 1 }} className="card" style={{ width: '100%', maxWidth: '380px', padding: '36px 32px' }}>
         <div style={{ textAlign: 'center', marginBottom: '28px' }}>
           <img src={logo} alt="Logo" style={{ margin: '0 auto 14px', height: '55px', width: 'auto', display: 'block' }} />
-          <h1 style={{ fontSize: '22px', fontWeight: '800' }}>Baridcash Janati</h1>
+          <h1 className="logo-text" style={{ fontSize: '2rem', margin: '1rem 0', color: '#5d4f48', fontWeight: '800' }}>OpsMaster</h1>
           <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
             {showForgot ? 'Réinitialisation du mot de passe Admin' : 'Connectez-vous pour continuer'}
           </p>
